@@ -1,0 +1,80 @@
+<?php
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+/**
+ * Minimal HS256 JWT — no Composer dependency.
+ */
+class Go3D_JWT {
+
+    private static function secret(): string {
+        $s = get_option( 'go3d_jwt_secret', '' );
+        if ( ! $s ) {
+            $s = wp_generate_password( 64, true, true );
+            update_option( 'go3d_jwt_secret', $s );
+        }
+        return $s;
+    }
+
+    private static function b64u_encode( string $data ): string {
+        return rtrim( strtr( base64_encode( $data ), '+/', '-_' ), '=' );
+    }
+
+    private static function b64u_decode( string $data ): string {
+        $pad = strlen( $data ) % 4;
+        if ( $pad ) $data .= str_repeat( '=', 4 - $pad );
+        return base64_decode( strtr( $data, '-_', '+/' ) );
+    }
+
+    /** Create a signed token. $extra_payload is merged into the claims. */
+    public static function encode( int $user_id, array $extra = [], int $ttl_days = 30 ): string {
+        $header  = self::b64u_encode( json_encode( [ 'alg' => 'HS256', 'typ' => 'JWT' ] ) );
+        $payload = self::b64u_encode( json_encode( array_merge( [
+            'sub' => $user_id,
+            'iat' => time(),
+            'exp' => time() + $ttl_days * DAY_IN_SECONDS,
+        ], $extra ) ) );
+        $sig = self::b64u_encode( hash_hmac( 'sha256', "$header.$payload", self::secret(), true ) );
+        return "$header.$payload.$sig";
+    }
+
+    /**
+     * Decode and validate. Returns the payload array or null on failure.
+     * @return array<string,mixed>|null
+     */
+    public static function decode( string $token ): ?array {
+        $parts = explode( '.', $token );
+        if ( count( $parts ) !== 3 ) return null;
+
+        [ $header, $payload, $sig ] = $parts;
+
+        $expected = self::b64u_encode( hash_hmac( 'sha256', "$header.$payload", self::secret(), true ) );
+        if ( ! hash_equals( $expected, $sig ) ) return null;
+
+        $data = json_decode( self::b64u_decode( $payload ), true );
+        if ( ! is_array( $data ) ) return null;
+        if ( isset( $data['exp'] ) && $data['exp'] < time() ) return null;
+
+        return $data;
+    }
+
+    /** Extract JWT from the Authorization header. */
+    public static function from_request(): ?string {
+        $header = isset( $_SERVER['HTTP_AUTHORIZATION'] )
+            ? sanitize_text_field( $_SERVER['HTTP_AUTHORIZATION'] )
+            : ( function_exists( 'apache_request_headers' )
+                ? ( apache_request_headers()['Authorization'] ?? null )
+                : null );
+
+        if ( ! $header ) return null;
+        if ( preg_match( '/^Bearer\s+(.+)$/i', $header, $m ) ) return $m[1];
+        return null;
+    }
+
+    /** Return the authenticated user_id for the current request, or null. */
+    public static function current_user_id(): ?int {
+        $token = self::from_request();
+        if ( ! $token ) return null;
+        $payload = self::decode( $token );
+        return ( $payload && isset( $payload['sub'] ) ) ? (int) $payload['sub'] : null;
+    }
+}

@@ -1,0 +1,84 @@
+name: Build & release WordPress plugin
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag (e.g. v1.0.0)'
+        required: false
+        default: 'dev'
+
+permissions:
+  contents: write   # needed to upload release assets
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build frontend
+        run: npm run build
+        # Vite outputs to dist/ — we copy it into the plugin's assets/dist/
+
+      - name: Copy dist into plugin
+        run: |
+          mkdir -p wp-plugin/go3d/assets/dist
+          cp -r dist/. wp-plugin/go3d/assets/dist/
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stamp version into plugin header
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VER="${TAG#v}"   # strip leading 'v'
+          sed -i "s/Version:      .*/Version:      $VER/" wp-plugin/go3d/go3d.php
+          sed -i "s/define( 'GO3D_VERSION', .*/define( 'GO3D_VERSION',    '$VER' );/" wp-plugin/go3d/go3d.php
+
+      - name: Create plugin ZIP
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          ZIP="go3d-${TAG}.zip"
+          cd wp-plugin
+          zip -r "../$ZIP" go3d/ \
+            --exclude "go3d/assets/dist/.vite/*" \
+            --exclude "*/.DS_Store" \
+            --exclude "*/__MACOSX/*"
+          echo "zip_name=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Upload ZIP to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.zip_name }}
+
+      - name: Upload ZIP as artifact (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.zip_name }}
+          path: ${{ env.zip_name }}
+          retention-days: 7
