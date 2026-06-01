@@ -1,0 +1,26 @@
+{
+  "name": "go-3d",
+  "version": "1.0.0",
+  "description": "Browser-based 3D Go game with a cyberpunk aesthetic — Three.js, Vite, TypeScript",
+  "author": "birniger",
+  "license": "MIT",
+  "homepage": "https://birniger.github.io/go-3d",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/birniger/go-3d.git"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.165.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.165.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0"
+  }
+}
