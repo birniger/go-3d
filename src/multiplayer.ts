@@ -44,6 +44,9 @@ export class MultiplayerController {
   readonly gameState: GameState;
   readonly mySlot: 1 | 2;
 
+  /** Which player's turn it currently is (1 or 2). Updated on every move. */
+  currentPlayer: 1 | 2;
+
   private pusher:   PusherInstance | null = null;
   private channel:  PusherChannel  | null = null;
   private clockInterval: ReturnType<typeof setInterval> | null = null;
@@ -53,11 +56,12 @@ export class MultiplayerController {
   private p2Ms: number | null;
 
   constructor(gameState: GameState, private callbacks: MultiplayerCallbacks) {
-    this.gameState = gameState;
-    const uid = AuthState.user!.id;
-    this.mySlot = gameState.player1_id === uid ? 1 : 2;
-    this.p1Ms = gameState.p1_time_ms;
-    this.p2Ms = gameState.p2_time_ms;
+    this.gameState    = gameState;
+    const uid         = AuthState.user!.id;
+    this.mySlot       = gameState.player1_id === uid ? 1 : 2;
+    this.currentPlayer = gameState.current_player as 1 | 2;
+    this.p1Ms         = gameState.p1_time_ms;
+    this.p2Ms         = gameState.p2_time_ms;
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────
@@ -133,6 +137,8 @@ export class MultiplayerController {
   // ── Pusher event handlers ─────────────────────────────────────────────────
 
   private handleMove(payload: MovePayload): void {
+    // Advance whose turn it is
+    this.currentPlayer = payload.next_player as 1 | 2;
     // Sync clocks with server-authoritative values
     if (payload.p1_time_ms !== undefined) this.p1Ms = payload.p1_time_ms;
     if (payload.p2_time_ms !== undefined) this.p2Ms = payload.p2_time_ms;
@@ -153,10 +159,10 @@ export class MultiplayerController {
     this.clockInterval = setInterval(() => {
       const now     = Date.now();
       const elapsed = now - this.lastTickAt;
-      const current = this.gameState.current_player;  // NOTE: stale after moves; caller updates
 
-      if (current === 1 && this.p1Ms !== null) this.p1Ms = Math.max(0, this.p1Ms - elapsed);
-      if (current === 2 && this.p2Ms !== null) this.p2Ms = Math.max(0, this.p2Ms - elapsed);
+      // currentPlayer is kept in sync by handleMove — always correct
+      if (this.currentPlayer === 1 && this.p1Ms !== null) this.p1Ms = Math.max(0, this.p1Ms - elapsed);
+      if (this.currentPlayer === 2 && this.p2Ms !== null) this.p2Ms = Math.max(0, this.p2Ms - elapsed);
       this.lastTickAt = now;
 
       this.callbacks.onClockTick(this.p1Ms, this.p2Ms);
@@ -246,4 +252,67 @@ export function formatClock(ms: number | null): string {
   const sec = s % 60;
   const pad = (n: number) => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+
+/**
+ * Drives the in-game clock display in embed.php.
+ *
+ * How it works end-to-end:
+ *
+ *  1. When a game is loaded, the server sends the current p1_time_ms / p2_time_ms
+ *     (how many milliseconds each player has left on their main clock).
+ *
+ *  2. MultiplayerController starts a 250 ms setInterval that subtracts real
+ *     elapsed time from whichever player is currently to move.
+ *     → fires onClockTick(p1Ms, p2Ms) every 250 ms
+ *
+ *  3. When a move comes in via Pusher, the server sends back its authoritative
+ *     clock values — those overwrite the locally-counted ones, correcting any
+ *     drift. The interval keeps running for the next player.
+ *
+ *  4. MultiplayerClockDisplay.update() converts milliseconds → mm:ss and writes
+ *     them to #go3d-p1-clock and #go3d-p2-clock. When ≤ 30 s remain, the
+ *     element gets a CSS class "go3d-clock-urgent" (turns red).
+ *
+ *  5. The active player's clock element gets "go3d-clock-active" so you can
+ *     visually highlight whose clock is running.
+ *
+ *  No time runs in a correspondence game (time_control = 'none') — both clocks
+ *  simply show "∞" and the display is hidden.
+ */
+export class MultiplayerClockDisplay {
+  private el1: HTMLElement | null;
+  private el2: HTMLElement | null;
+  private bar: HTMLElement | null;
+
+  constructor() {
+    this.el1 = document.getElementById('go3d-p1-clock');
+    this.el2 = document.getElementById('go3d-p2-clock');
+    this.bar = document.getElementById('go3d-clock-bar');
+  }
+
+  /** Call once when the game loads. Hides the bar for correspondence games. */
+  init(timeControl: string, currentPlayer: 1 | 2, p1Ms: number | null, p2Ms: number | null): void {
+    if (!this.bar) return;
+    if (timeControl === 'none') {
+      this.bar.style.display = 'none';
+      return;
+    }
+    this.bar.style.display = '';
+    this.update(currentPlayer, p1Ms, p2Ms);
+  }
+
+  /** Called on every onClockTick from MultiplayerController. */
+  update(currentPlayer: 1 | 2, p1Ms: number | null, p2Ms: number | null): void {
+    this._render(this.el1, p1Ms, currentPlayer === 1);
+    this._render(this.el2, p2Ms, currentPlayer === 2);
+  }
+
+  private _render(el: HTMLElement | null, ms: number | null, active: boolean): void {
+    if (!el) return;
+    el.textContent = formatClock(ms);
+    el.classList.toggle('go3d-clock-active',  active);
+    el.classList.toggle('go3d-clock-urgent',  ms !== null && ms <= 30_000);
+    el.classList.toggle('go3d-clock-flagged', ms !== null && ms <= 0);
+  }
 }

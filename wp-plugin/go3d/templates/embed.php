@@ -142,20 +142,67 @@
 
   <!-- ── In-game ────────────────────────────────────────────────── -->
   <div id="go3d-game-screen" class="go3d-screen" style="display:none;">
-    <!-- The existing 3-D canvas is injected here by the JS bundle -->
+
+    <!-- Top bar: back button · player names & turn indicator · clocks -->
     <div id="go3d-game-topbar">
+
       <button id="go3d-back-to-lobby-game" class="go3d-btn-ghost">← Lobby</button>
+
       <div id="go3d-player-info">
-        <span id="go3d-p1-info" class="go3d-player-badge go3d-p1"></span>
-        <span id="go3d-turn-indicator" class="go3d-turn-label"></span>
-        <span id="go3d-p2-info" class="go3d-player-badge go3d-p2"></span>
+        <!-- Player 1 (Black) -->
+        <div class="go3d-player-badge go3d-p1" id="go3d-p1-info">
+          <span class="go3d-stone-dot go3d-stone-black">●</span>
+          <span id="go3d-p1-name">—</span>
+          <span id="go3d-p1-elo" class="go3d-elo-badge"></span>
+        </div>
+
+        <span id="go3d-turn-indicator" class="go3d-turn-label" aria-live="polite"></span>
+
+        <!-- Player 2 (White) -->
+        <div class="go3d-player-badge go3d-p2" id="go3d-p2-info">
+          <span class="go3d-stone-dot go3d-stone-white">○</span>
+          <span id="go3d-p2-name">—</span>
+          <span id="go3d-p2-elo" class="go3d-elo-badge"></span>
+        </div>
       </div>
-      <div id="go3d-clock-bar">
-        <span id="go3d-p1-clock" class="go3d-clock"></span>
-        <span id="go3d-p2-clock" class="go3d-clock"></span>
+
+      <!--
+        Clock bar — hidden for correspondence games (time_control = 'none').
+        MultiplayerClockDisplay.init() shows/hides it and writes the values.
+
+        Each clock span gets CSS classes applied by JS:
+          .go3d-clock-active  → this player's clock is currently running
+          .go3d-clock-urgent  → ≤ 30 seconds left  (yellow → red)
+          .go3d-clock-flagged → time is up (should not normally appear;
+                                the server ends the game before this)
+      -->
+      <div id="go3d-clock-bar" style="display:none;">
+        <div class="go3d-clock-cell">
+          <span class="go3d-clock-label">Black</span>
+          <span id="go3d-p1-clock" class="go3d-clock">—</span>
+        </div>
+        <div class="go3d-clock-cell">
+          <span class="go3d-clock-label">White</span>
+          <span id="go3d-p2-clock" class="go3d-clock">—</span>
+        </div>
       </div>
-    </div>
+
+    </div><!-- #go3d-game-topbar -->
+
+    <!-- Canvas injected here by the JS bundle -->
     <div id="go3d-canvas-wrap"></div>
+
+    <!-- In-game action buttons (pass / resign) shown over the canvas -->
+    <div id="go3d-game-actions">
+      <button id="go3d-pass-btn"   class="go3d-btn-ghost">Pass</button>
+      <button id="go3d-resign-btn" class="go3d-btn-ghost go3d-btn-danger">Resign</button>
+    </div>
+
+    <!-- Waiting overlay — shown when it's the opponent's turn -->
+    <div id="go3d-waiting-overlay" style="display:none;" aria-live="polite">
+      Waiting for opponent…
+    </div>
+
   </div>
 
   <!-- ── Global status message ─────────────────────────────────── -->
