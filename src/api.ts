@@ -129,6 +129,9 @@ export interface SphereGeometry {
 }
 
 export interface GameState extends GameSummary {
+  // Server-resolved labels so the board can show usernames/ELO immediately.
+  player1_elo?:        number | null;
+  player2_elo?:        number | null;
   time_settings:       Record<string, unknown> | null;
   p1_time_ms:          number | null;
   p2_time_ms:          number | null;
@@ -186,6 +189,12 @@ export interface GameOverPayload {
   p2_score:      number | null;
   elo_change_p1: number | null;
   elo_change_p2: number | null;
+}
+
+export interface PlayerJoinedPayload {
+  player2_id:   number;
+  player2_name?: string | null;
+  player2_elo?:  number | null;
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────

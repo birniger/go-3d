@@ -11,7 +11,7 @@
  */
 
 import { AuthState } from './auth';
-import { Users, GameState, MovePayload, GameOverPayload, SphereGeometry } from './api';
+import { Users, GameState, MovePayload, GameOverPayload, PlayerJoinedPayload, SphereGeometry } from './api';
 import { Go3D } from './game';
 import { Renderer } from './renderer';
 import { SphereRenderer } from './sphere-renderer';
@@ -214,7 +214,7 @@ export class GameSession {
     const callbacks: MultiplayerCallbacks = {
       onMove:         p  => this.applyMove(p),
       onGameOver:     p  => this.handleGameOver(p),
-      onPlayerJoined: () => { showToast('Your opponent has joined!', 'success'); this.refreshTurnUI(); },
+      onPlayerJoined: p  => this.handlePlayerJoined(p),
       onError:        m  => showToast(m, 'error'),
       onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
       onLayerChange:  l  => {
@@ -357,6 +357,16 @@ export class GameSession {
     this.renderer.showTerritory(terr.map);
     this.scoreShowing = true;
     this.enableReplay();
+  }
+
+  private handlePlayerJoined(p: PlayerJoinedPayload): void {
+    this.state.status = 'active';
+    this.state.player2_id = p.player2_id;
+    this.state.player2_name = p.player2_name ?? this.state.player2_name;
+    this.state.player2_elo = p.player2_elo ?? this.state.player2_elo;
+    this.fillPlayerBar();
+    this.refreshTurnUI();
+    showToast('Your opponent has joined!', 'success');
   }
 
   // ── View controls: slice / camera / cursor / score / replay ─────────────────
@@ -591,12 +601,18 @@ export class GameSession {
       set(2, this.state.player2_name || 'White');
       return;
     }
-    set(1, `Player ${this.state.player1_id}`);
-    set(2, this.state.player2_id ? `Player ${this.state.player2_id}` : '(waiting)');
-
-    void Users.getProfile(this.state.player1_id)
-      .then(r => set(1, r.user.username, r.user.elo)).catch(() => {});
-    if (this.state.player2_id) {
+    // Names + ELO now arrive with the game state, so label the board straight
+    // away. Only fall back to a /users/{id} fetch if the server didn't supply
+    // a name (e.g. an older cached payload).
+    const p1Name = this.state.player1_name;
+    const p2Name = this.state.player2_name;
+    set(1, p1Name || `Player ${this.state.player1_id}`, this.state.player1_elo ?? undefined);
+    set(2, this.state.player2_id ? (p2Name || `Player ${this.state.player2_id}`) : '(waiting)', this.state.player2_elo ?? undefined);
+    if (!p1Name) {
+      void Users.getProfile(this.state.player1_id)
+        .then(r => set(1, r.user.username, r.user.elo)).catch(() => {});
+    }
+    if (this.state.player2_id && !p2Name) {
       void Users.getProfile(this.state.player2_id)
         .then(r => set(2, r.user.username, r.user.elo)).catch(() => {});
     }
@@ -662,7 +678,7 @@ export class SphereGameSession {
     const callbacks: MultiplayerCallbacks = {
       onMove:         p  => this.applyMove(p),
       onGameOver:     p  => this.handleGameOver(p),
-      onPlayerJoined: () => { showToast('Your opponent has joined!', 'success'); this.refreshTurnUI(); },
+      onPlayerJoined: p  => this.handlePlayerJoined(p),
       onError:        m  => showToast(m, 'error'),
       onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
     };
@@ -794,6 +810,16 @@ export class SphereGameSession {
     this.renderer.showTerritory(this.computeTerritory());
   }
 
+  private handlePlayerJoined(p: PlayerJoinedPayload): void {
+    this.state.status = 'active';
+    this.state.player2_id = p.player2_id;
+    this.state.player2_name = p.player2_name ?? this.state.player2_name;
+    this.state.player2_elo = p.player2_elo ?? this.state.player2_elo;
+    this.fillPlayerBar();
+    this.refreshTurnUI();
+    showToast('Your opponent has joined!', 'success');
+  }
+
   /** Flood-fill empty regions on the graph; region bordered by one colour = its territory. */
   private computeTerritory(): Record<number, number> {
     const map: Record<number, number> = {};
@@ -863,11 +889,18 @@ export class SphereGameSession {
       set(2, this.state.player2_name || 'White');
       return;
     }
-    set(1, `Player ${this.state.player1_id}`);
-    set(2, this.state.player2_id ? `Player ${this.state.player2_id}` : '(waiting)');
-    void Users.getProfile(this.state.player1_id)
-      .then(r => set(1, r.user.username, r.user.elo)).catch(() => {});
-    if (this.state.player2_id) {
+    // Names + ELO now arrive with the game state, so label the board straight
+    // away. Only fall back to a /users/{id} fetch if the server didn't supply
+    // a name (e.g. an older cached payload).
+    const p1Name = this.state.player1_name;
+    const p2Name = this.state.player2_name;
+    set(1, p1Name || `Player ${this.state.player1_id}`, this.state.player1_elo ?? undefined);
+    set(2, this.state.player2_id ? (p2Name || `Player ${this.state.player2_id}`) : '(waiting)', this.state.player2_elo ?? undefined);
+    if (!p1Name) {
+      void Users.getProfile(this.state.player1_id)
+        .then(r => set(1, r.user.username, r.user.elo)).catch(() => {});
+    }
+    if (this.state.player2_id && !p2Name) {
       void Users.getProfile(this.state.player2_id)
         .then(r => set(2, r.user.username, r.user.elo)).catch(() => {});
     }

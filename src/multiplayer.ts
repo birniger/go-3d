@@ -11,7 +11,7 @@
  * to know about Pusher or the API directly.
  */
 
-import { Games, GameState, MovePayload, GameOverPayload, ApiError, Config } from './api';
+import { Games, GameState, MovePayload, GameOverPayload, PlayerJoinedPayload, ApiError, Config } from './api';
 import { AuthState } from './auth';
 
 // Pusher is loaded via a CDN <script> tag injected by the shortcode.
@@ -33,7 +33,7 @@ interface PusherChannel {
 export interface MultiplayerCallbacks {
   onMove:      (payload: MovePayload) => void;
   onGameOver:  (payload: GameOverPayload) => void;
-  onPlayerJoined: (player2_id: number) => void;
+  onPlayerJoined: (payload: PlayerJoinedPayload) => void;
   onError:     (msg: string) => void;
   onClockTick: (p1Ms: number | null, p2Ms: number | null) => void;
   /** Stack mode: fired by the polling fallback when the active layer advances. */
@@ -93,8 +93,7 @@ export class MultiplayerController {
     this.channel.bind('move',          (d: unknown) => this.handleMove(d as MovePayload));
     this.channel.bind('game-over',     (d: unknown) => this.handleGameOver(d as GameOverPayload));
     this.channel.bind('player-joined', (d: unknown) => {
-      const payload = d as { player2_id: number };
-      this.callbacks.onPlayerJoined(payload.player2_id);
+      this.callbacks.onPlayerJoined(d as PlayerJoinedPayload);
     });
 
     if (this.gameState.time_control !== 'none') this.startClock();

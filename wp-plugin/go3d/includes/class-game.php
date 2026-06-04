@@ -125,8 +125,11 @@ class Go3D_Game {
             'status'     => 'active',
         ], [ 'id' => $game_id ] );
 
+        $labels = self::player_labels( (int)$game['player1_id'], $player2_id );
         Go3D_Pusher::trigger( "private-game-$game_id", 'player-joined', [
-            'player2_id' => $player2_id,
+            'player2_id'   => $player2_id,
+            'player2_name' => $labels['p2_name'],
+            'player2_elo'  => $labels['p2_elo'],
         ] );
 
         return [ 'ok' => true ];
@@ -693,6 +696,32 @@ class Go3D_Game {
         return $row ?: null;
     }
 
+    /**
+     * Resolve username + ELO for one or both players in a single query.
+     *
+     * @return array{p1_name:?string,p2_name:?string,p1_elo:?int,p2_elo:?int}
+     */
+    private static function player_labels( int $p1_id, ?int $p2_id ): array {
+        global $wpdb;
+        $u   = $wpdb->prefix . 'go3d_users';
+        $ids = array_values( array_filter( [ $p1_id, $p2_id ] ) );
+        $map = [];
+        if ( $ids ) {
+            $ph   = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+            $rows = $wpdb->get_results(
+                $wpdb->prepare( "SELECT id, username, elo FROM $u WHERE id IN ($ph)", ...$ids ),
+                ARRAY_A
+            ) ?: [];
+            foreach ( $rows as $r ) $map[ (int)$r['id'] ] = $r;
+        }
+        return [
+            'p1_name' => isset( $map[ $p1_id ] ) ? $map[ $p1_id ]['username'] : null,
+            'p2_name' => ( $p2_id && isset( $map[ $p2_id ] ) ) ? $map[ $p2_id ]['username'] : null,
+            'p1_elo'  => isset( $map[ $p1_id ] ) ? (int)$map[ $p1_id ]['elo'] : null,
+            'p2_elo'  => ( $p2_id && isset( $map[ $p2_id ] ) ) ? (int)$map[ $p2_id ]['elo'] : null,
+        ];
+    }
+
     /** @return array<array<string,mixed>> */
     public static function get_moves( int $game_id ): array {
         global $wpdb;
@@ -721,6 +750,11 @@ class Go3D_Game {
         $moves    = self::get_moves( $game_id );
         $is_sphere = ( $game['mode'] ?? 'cube' ) === 'sphere';
 
+        // Resolve player display names + ELO up front so the client can label
+        // the board immediately, instead of flashing "Player 12" and then
+        // back-filling it with two extra /users/{id} round-trips.
+        $names = self::player_labels( (int)$game['player1_id'], $game['player2_id'] ? (int)$game['player2_id'] : null );
+
         // Sphere games carry the geodesic geometry so the client can render the
         // globe without regenerating the graph (the server is the single source
         // of truth for both rules and rendering). board is a FLAT node array.
@@ -741,6 +775,10 @@ class Go3D_Game {
             'id'                 => (int)$game['id'],
             'player1_id'         => (int)$game['player1_id'],
             'player2_id'         => $game['player2_id'] ? (int)$game['player2_id'] : null,
+            'player1_name'       => $names['p1_name'],
+            'player2_name'       => $names['p2_name'],
+            'player1_elo'        => $names['p1_elo'],
+            'player2_elo'        => $names['p2_elo'],
             'board_size'         => (int)$game['board_size'],
             'mode'               => $game['mode'] ?? 'cube',
             'active_layer'       => isset( $game['active_layer'] ) ? (int)$game['active_layer'] : 0,
