@@ -111,6 +111,30 @@
 .go3d-form-actions .go3d-btn-ghost { flex: 1 1 auto; }
 .go3d-form-hint { margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--go3d-muted, #8a93a7); }
 
+/* ── Pre-login local play (auth screen entry + setup screen) ─────────────── */
+.go3d-auth-local { margin-top: 1.25rem; text-align: center; }
+.go3d-auth-local .go3d-btn-ghost { width: 100%; }
+.go3d-auth-local .go3d-form-hint { text-align: center; }
+/* "or" divider: a centred label across a hairline rule. */
+.go3d-or-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+  color: var(--go3d-muted, #8a93a7);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.go3d-or-divider::before,
+.go3d-or-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--go3d-border);
+}
+.go3d-local-setup-panel { max-width: 640px; margin: 0 auto; }
+
 /* ── Auth tabs ───────────────────────────────────────────────────────────── */
 .go3d-auth-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
 .go3d-tab-btn {

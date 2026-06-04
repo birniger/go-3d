@@ -39,7 +39,85 @@
       <p><a href="#" id="go3d-back-to-login">Back to login</a></p>
     </form>
 
+    <!-- No account needed: jump straight into a local hot-seat game. -->
+    <div class="go3d-auth-local">
+      <div class="go3d-or-divider"><span>or</span></div>
+      <button type="button" id="go3d-auth-local-btn" class="go3d-btn-ghost">Play locally — 2 players, 1 screen</button>
+      <p class="go3d-form-hint">No account needed. Both players take turns at this computer.</p>
+    </div>
+
   </div><!-- #go3d-auth -->
+
+  <!-- ── Local game setup (pre-login, no account) ───────────────── -->
+  <div id="go3d-local-setup" class="go3d-screen" style="display:none;">
+    <section class="go3d-panel go3d-local-setup-panel">
+      <h2>Local game</h2>
+      <p class="go3d-form-hint">Two players, one screen. Black and White take turns on this device — nothing is sent to the server.</p>
+      <form id="go3d-ls-form" class="go3d-form">
+        <div class="go3d-form-row">
+          <label>Mode
+            <select name="mode" id="go3d-ls-mode-select">
+              <option value="cube" selected>Cube</option>
+              <option value="stack">Stack</option>
+              <option value="sphere">Sphere</option>
+            </select>
+          </label>
+          <label id="go3d-ls-cube-size-wrap">Board size
+            <select id="go3d-ls-cube-size">
+              <option value="9" selected>9×9×9</option>
+              <option value="5">5×5×5</option>
+              <option value="13">13×13×13</option>
+              <option value="19">19×19×19</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <input type="number" id="go3d-ls-cube-custom" value="9" min="2" max="19" step="1" style="width:4em;display:none;" title="Cube edge length (2–19)">
+          </label>
+          <label id="go3d-ls-sphere-size-wrap" style="display:none;">Sphere size
+            <select id="go3d-ls-sphere-size">
+              <option value="2">Small (42 points)</option>
+              <option value="3" selected>Medium (92 points)</option>
+              <option value="4">Large (162 points)</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <input type="number" id="go3d-ls-sphere-freq" value="5" min="2" max="8" step="1" style="width:4em;display:none;" title="Geodesic frequency (2–8)">
+          </label>
+          <label>Scoring
+            <select name="scoring_mode">
+              <option value="chinese" selected>Chinese</option>
+              <option value="japanese">Japanese</option>
+            </select>
+          </label>
+          <label>Komi
+            <input type="number" name="komi" value="6.5" step="0.5" min="0" max="20" style="width:5em;">
+          </label>
+        </div>
+        <div class="go3d-form-row">
+          <label>Time control
+            <select name="time_control" id="go3d-ls-time-control-select">
+              <option value="none" selected>None</option>
+              <option value="absolute">Absolute</option>
+              <option value="byoyomi">Byōyomi</option>
+              <option value="fischer">Fischer</option>
+            </select>
+          </label>
+          <div id="go3d-ls-time-settings" style="display:none;">
+            <label>Main time (s)<input type="number" name="main_time_s" value="600" min="30" step="30"></label>
+            <span id="go3d-ls-byoyomi-extra" style="display:none;">
+              <label>Periods<input type="number" name="byoyomi_periods" value="5" min="1"></label>
+              <label>Period (s)<input type="number" name="byoyomi_time_s" value="30" min="5"></label>
+            </span>
+            <span id="go3d-ls-fischer-extra" style="display:none;">
+              <label>Increment (s)<input type="number" name="fischer_increment_s" value="10" min="1"></label>
+            </span>
+          </div>
+        </div>
+        <div class="go3d-form-actions">
+          <button type="submit" id="go3d-ls-start-btn" class="go3d-btn-primary">Start local game</button>
+          <button type="button" id="go3d-ls-back" class="go3d-btn-ghost">Back</button>
+        </div>
+      </form>
+    </section>
+  </div><!-- #go3d-local-setup -->
 
   <!-- ── Lobby ──────────────────────────────────────────────────── -->
   <div id="go3d-lobby" class="go3d-screen" style="display:none;">

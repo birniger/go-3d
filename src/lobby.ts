@@ -10,9 +10,67 @@ import { formatClock } from './multiplayer';
 
 // ── Screen management ─────────────────────────────────────────────────────────
 
-export type Screen = 'auth' | 'lobby' | 'game' | 'profile' | 'local';
+export type Screen = 'auth' | 'lobby' | 'game' | 'profile' | 'local' | 'local-setup';
 
 type ScreenChangeCallback = (screen: Screen, data?: unknown) => void;
+
+// Normalised new-game settings, shared by the lobby form (server create +
+// post-login local) and the pre-login local-setup form.
+interface GameFormSettings {
+  board_size:    number;
+  mode:          'cube' | 'stack' | 'sphere';
+  scoring_mode:  'chinese' | 'japanese';
+  komi:          number;
+  time_control:  string;
+  time_settings: Record<string, number> | null;
+}
+
+// Element IDs for one game-config form. Two instances exist with different
+// prefixes (lobby `go3d-*`, pre-login `go3d-ls-*`) but identical behaviour.
+interface GameFormIds {
+  form:              string;
+  timeControlSelect: string;
+  timeSettings:      string;
+  byoyomiExtra:      string;
+  fischerExtra:      string;
+  modeSelect:        string;
+  cubeWrap:          string;
+  sphereWrap:        string;
+  sphereSize:        string;
+  sphereFreq:        string;
+  cubeSize:          string;
+  cubeCustom:        string;
+}
+
+const LOBBY_FORM_IDS: GameFormIds = {
+  form:              'go3d-new-game-form',
+  timeControlSelect: 'go3d-time-control-select',
+  timeSettings:      'go3d-time-settings',
+  byoyomiExtra:      'go3d-byoyomi-extra',
+  fischerExtra:      'go3d-fischer-extra',
+  modeSelect:        'go3d-mode-select',
+  cubeWrap:          'go3d-cube-size-wrap',
+  sphereWrap:        'go3d-sphere-size-wrap',
+  sphereSize:        'go3d-sphere-size',
+  sphereFreq:        'go3d-sphere-freq',
+  cubeSize:          'go3d-cube-size',
+  cubeCustom:        'go3d-cube-custom',
+};
+
+const LOCAL_SETUP_FORM_IDS: GameFormIds = {
+  form:              'go3d-ls-form',
+  timeControlSelect: 'go3d-ls-time-control-select',
+  timeSettings:      'go3d-ls-time-settings',
+  byoyomiExtra:      'go3d-ls-byoyomi-extra',
+  fischerExtra:      'go3d-ls-fischer-extra',
+  modeSelect:        'go3d-ls-mode-select',
+  cubeWrap:          'go3d-ls-cube-size-wrap',
+  sphereWrap:        'go3d-ls-sphere-size-wrap',
+  sphereSize:        'go3d-ls-sphere-size',
+  sphereFreq:        'go3d-ls-sphere-freq',
+  cubeSize:          'go3d-ls-cube-size',
+  cubeCustom:        'go3d-ls-cube-custom',
+};
 
 // ── Lobby class ───────────────────────────────────────────────────────────────
 
@@ -157,11 +215,57 @@ export class Lobby {
     document.getElementById('go3d-refresh-open')!.addEventListener('click', () => void this.loadOpenGames());
     document.getElementById('go3d-refresh-leaderboard')?.addEventListener('click', () => void this.loadLeaderboard());
 
-    // New game form: show/hide time settings
-    const tcSel = document.getElementById('go3d-time-control-select') as HTMLSelectElement;
-    const tsDiv = document.getElementById('go3d-time-settings')!;
-    const bDiv  = document.getElementById('go3d-byoyomi-extra')!;
-    const fDiv  = document.getElementById('go3d-fischer-extra')!;
+    // Lobby new-game form: server "Create open game" + post-login "Play locally".
+    const readLobby = this.bindGameForm(LOBBY_FORM_IDS);
+    document.getElementById('go3d-new-game-form')!.addEventListener('submit', async e => {
+      e.preventDefault();
+      const s        = readLobby();
+      const settings: Record<string, unknown> = {
+        board_size:   s.board_size,
+        mode:         s.mode,
+        scoring_mode: s.scoring_mode,
+        komi:         s.komi,
+        time_control: s.time_control,
+      };
+      if (s.time_settings) settings.time_settings = s.time_settings;
+      try {
+        const res = await Games.create(settings as Parameters<typeof Games.create>[0]);
+        showToast('Game created! Waiting for an opponent…', 'info');
+        void this.loadOpenGames();
+        void this.loadActiveGames();
+        this.onScreenChange('game', res.game_id);
+      } catch (err) {
+        showToast(apiErrorMessage(err), 'error');
+      }
+    });
+    document.getElementById('go3d-play-local-btn')?.addEventListener('click', () => {
+      this.startLocal(readLobby());
+    });
+
+    // Pre-login local-setup form, reachable from the auth screen so two players
+    // can share one screen with no account — same modes/time controls as online.
+    const readLocalSetup = this.bindGameForm(LOCAL_SETUP_FORM_IDS);
+    document.getElementById('go3d-auth-local-btn')?.addEventListener('click', () => {
+      setScreen('local-setup');
+    });
+    document.getElementById('go3d-ls-form')?.addEventListener('submit', e => {
+      e.preventDefault();
+      this.startLocal(readLocalSetup());
+    });
+    document.getElementById('go3d-ls-back')?.addEventListener('click', () => {
+      if (AuthState.user) void this.showLobby();
+      else this.showAuth();
+    });
+  }
+
+  // Wire one game-config form's show/hide toggles + size clamps, and return a
+  // reader that normalises its current values into GameFormSettings. The lobby
+  // and pre-login local-setup forms share this so the two paths never drift.
+  private bindGameForm(ids: GameFormIds): () => GameFormSettings {
+    const tcSel = document.getElementById(ids.timeControlSelect) as HTMLSelectElement;
+    const tsDiv = document.getElementById(ids.timeSettings)!;
+    const bDiv  = document.getElementById(ids.byoyomiExtra)!;
+    const fDiv  = document.getElementById(ids.fischerExtra)!;
     tcSel.addEventListener('change', () => {
       tsDiv.style.display = tcSel.value === 'none' ? 'none' : '';
       bDiv.style.display  = tcSel.value === 'byoyomi'  ? '' : 'none';
@@ -170,13 +274,13 @@ export class Lobby {
 
     // Mode selector: cube/stack use the cube size dropdown; sphere swaps in the
     // geodesic size selector (presets + a custom frequency input).
-    const modeSel    = document.getElementById('go3d-mode-select')   as HTMLSelectElement;
-    const cubeWrap   = document.getElementById('go3d-cube-size-wrap')!;
-    const sphereWrap = document.getElementById('go3d-sphere-size-wrap')!;
-    const sphereSel  = document.getElementById('go3d-sphere-size')   as HTMLSelectElement;
-    const sphereFreq = document.getElementById('go3d-sphere-freq')   as HTMLInputElement;
-    const cubeSel    = document.getElementById('go3d-cube-size')     as HTMLSelectElement;
-    const cubeCustom = document.getElementById('go3d-cube-custom')   as HTMLInputElement;
+    const modeSel    = document.getElementById(ids.modeSelect) as HTMLSelectElement;
+    const cubeWrap   = document.getElementById(ids.cubeWrap)!;
+    const sphereWrap = document.getElementById(ids.sphereWrap)!;
+    const sphereSel  = document.getElementById(ids.sphereSize) as HTMLSelectElement;
+    const sphereFreq = document.getElementById(ids.sphereFreq) as HTMLInputElement;
+    const cubeSel    = document.getElementById(ids.cubeSize)   as HTMLSelectElement;
+    const cubeCustom = document.getElementById(ids.cubeCustom) as HTMLInputElement;
     modeSel.addEventListener('change', () => {
       const isSphere = modeSel.value === 'sphere';
       cubeWrap.style.display   = isSphere ? 'none' : '';
@@ -198,10 +302,8 @@ export class Lobby {
     cubeCustom.addEventListener('change', clampInput(cubeCustom, 2, 19));
     sphereFreq.addEventListener('change', clampInput(sphereFreq, 2, 8));
 
-    // Read the new-game form into a normalised settings object. Shared by both
-    // "Create open game" (server) and "Play locally" (hot-seat) so the two paths
-    // can never drift apart.
-    const readSettings = (form: HTMLFormElement) => {
+    return (): GameFormSettings => {
+      const form = document.getElementById(ids.form) as HTMLFormElement;
       const fd   = new FormData(form);
       const tc   = fd.get('time_control') as string;
       const mode = fd.get('mode') as string;
@@ -236,46 +338,20 @@ export class Lobby {
         komi:         Number(fd.get('komi')),
         time_control: tc,
         time_settings: timeSettings,
-      } as const;
-    };
-
-    document.getElementById('go3d-new-game-form')!.addEventListener('submit', async e => {
-      e.preventDefault();
-      const form     = e.currentTarget as HTMLFormElement;
-      const s        = readSettings(form);
-      const settings: Record<string, unknown> = {
-        board_size:   s.board_size,
-        mode:         s.mode,
-        scoring_mode: s.scoring_mode,
-        komi:         s.komi,
-        time_control: s.time_control,
       };
-      if (s.time_settings) settings.time_settings = s.time_settings;
-      try {
-        const res = await Games.create(settings as Parameters<typeof Games.create>[0]);
-        showToast('Game created! Waiting for an opponent…', 'info');
-        void this.loadOpenGames();
-        void this.loadActiveGames();
-        this.onScreenChange('game', res.game_id);
-      } catch (err) {
-        showToast(apiErrorMessage(err), 'error');
-      }
-    });
+    };
+  }
 
-    // "Play locally": same settings, no server — start a hot-seat game where
-    // both players share this screen (like the standalone GitHub Pages build,
-    // but with every mode + time control).
-    document.getElementById('go3d-play-local-btn')?.addEventListener('click', () => {
-      const form = document.getElementById('go3d-new-game-form') as HTMLFormElement;
-      const s    = readSettings(form);
-      this.onScreenChange('local', {
-        mode:          s.mode,
-        board_size:    s.board_size,
-        scoring_mode:  s.scoring_mode,
-        komi:          s.komi,
-        time_control:  s.time_control,
-        time_settings: s.time_settings,
-      });
+  // Start a hot-seat game from normalised form settings (same surface whether
+  // launched from the lobby or pre-login). app.ts wires up the LocalController.
+  private startLocal(s: GameFormSettings): void {
+    this.onScreenChange('local', {
+      mode:          s.mode,
+      board_size:    s.board_size,
+      scoring_mode:  s.scoring_mode,
+      komi:          s.komi,
+      time_control:  s.time_control,
+      time_settings: s.time_settings,
     });
   }
 
