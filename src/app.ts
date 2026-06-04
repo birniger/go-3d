@@ -54,6 +54,10 @@ class App {
    * existing session shell with a LocalController instead of the multiplayer one.
    */
   private enterLocalGame(config: LocalGameConfig): void {
+    this.enterLocalState(buildLocalState(config));
+  }
+
+  private enterLocalState(state: ReturnType<typeof buildLocalState>): void {
     document.querySelectorAll<HTMLElement>('.go3d-screen').forEach(el => {
       el.style.display = el.id === 'go3d-game-screen' ? '' : 'none';
     });
@@ -61,12 +65,12 @@ class App {
     if (this.session) { this.session.dispose(); this.session = null; }
 
     try {
-      const state = buildLocalState(config);
       const onExit = () => { this.session = null; void this.lobby.showLobby(); };
       const makeLocal: ControllerFactory = (s, c) => new LocalController(s, c);
+      const onReload = (next?: typeof state) => { if (next) this.enterLocalState(next); };
       this.session = state.mode === 'sphere'
-        ? new SphereGameSession(state, onExit, makeLocal)
-        : new GameSession(state, onExit, makeLocal);
+        ? new SphereGameSession(state, onExit, makeLocal, onReload)
+        : new GameSession(state, onExit, makeLocal, onReload);
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Could not start local game.', 'error');
       void this.lobby.showLobby();
@@ -78,12 +82,14 @@ class App {
     document.querySelectorAll<HTMLElement>('.go3d-screen').forEach(el => {
       el.style.display = el.id === 'go3d-game-screen' ? '' : 'none';
     });
+    if (this.session) { this.session.dispose(); this.session = null; }
     try {
       const state = await Games.get(gameId);
       const onExit = () => { this.session = null; void this.lobby.showLobby(); };
+      const onReload = () => { void this.enterGame(gameId); };
       this.session = state.mode === 'sphere'
-        ? new SphereGameSession(state, onExit)
-        : new GameSession(state, onExit);
+        ? new SphereGameSession(state, onExit, undefined, onReload)
+        : new GameSession(state, onExit, undefined, onReload);
     } catch {
       showToast('Could not load that game.', 'error');
       void this.lobby.showLobby();

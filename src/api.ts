@@ -97,6 +97,15 @@ export interface User {
   last_seen_at: string | null;
 }
 
+export interface FriendUser {
+  friendship_id: number;
+  id:            number;
+  username:      string;
+  avatar_url:    string | null;
+  elo:           number;
+  games_played:  number;
+}
+
 export type GameMode = 'cube' | 'stack' | 'sphere';
 
 export interface GameSummary {
@@ -149,6 +158,7 @@ export interface GameState extends GameSummary {
   // Present only for sphere games.
   geometry:            SphereGeometry | null;
   moves:               MoveRecord[];
+  pending_undo?:       UndoRequestPayload | null;
 }
 
 export interface MoveRecord {
@@ -197,6 +207,41 @@ export interface PlayerJoinedPayload {
   player2_id:   number;
   player2_name?: string | null;
   player2_elo?:  number | null;
+}
+
+export interface UndoRequestPayload {
+  requester_id:   number;
+  requester_name: string;
+  move_number:    number;
+}
+
+export interface UndoAppliedPayload {
+  move_number: number;
+  state:       GameState;
+}
+
+export interface UndoDeclinedPayload {
+  move_number: number;
+}
+
+export interface Challenge {
+  id:              number;
+  challenger_id:   number;
+  challenged_id:   number | null;
+  challenger_name?: string | null;
+  challenger_elo?:  number | null;
+  challenged_name?: string | null;
+  challenged_elo?:  number | null;
+  board_size:      number;
+  mode:            GameMode;
+  scoring_mode:    string;
+  komi:            number;
+  time_control:    string;
+  time_settings:   Record<string, unknown> | null;
+  status:          string;
+  game_id:         number | null;
+  created_at:      string;
+  expires_at:      string;
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -251,6 +296,30 @@ export const Games = {
 
   move: (id: number, move: { type: string; x?: number; y?: number; z?: number; time_ms?: number }) =>
     post<{ event: string; payload: MovePayload | GameOverPayload }>(`/games/${id}/move`, move as Record<string, unknown>),
+
+  requestUndo: (id: number) =>
+    post<{ message: string }>(`/games/${id}/undo-request`, {}),
+
+  respondUndo: (id: number, accept: boolean) =>
+    post<{ message: string; state: GameState | null }>(`/games/${id}/undo-respond`, { accept }),
+
+  challenges: () =>
+    get<{ incoming: Challenge[]; outgoing: Challenge[] }>('/challenges'),
+
+  challenge: (challenged_id: number, settings: {
+    board_size?:    number;
+    mode?:          GameMode;
+    scoring_mode?:  string;
+    komi?:          number;
+    time_control?:  string;
+    time_settings?: Record<string, unknown>;
+  }) => post<{ message: string; challenge_id: number }>('/challenges', { challenged_id, ...settings } as Record<string, unknown>),
+
+  acceptChallenge: (id: number) =>
+    post<{ message: string; game_id: number }>(`/challenges/${id}/accept`, {}),
+
+  declineChallenge: (id: number) =>
+    post<{ message: string }>(`/challenges/${id}/decline`, {}),
 };
 
 // ── Users ─────────────────────────────────────────────────────────────────────
@@ -270,4 +339,16 @@ export const Users = {
 
   updateNotifications: (data: { notify_idle_hours?: number; notify_timeout_mins?: number }) =>
     patch<{ message: string }>('/users/me/notifications', data as Record<string, unknown>),
+
+  friends: () =>
+    get<{ friends: FriendUser[]; incoming: FriendUser[]; outgoing: FriendUser[] }>('/users/friends'),
+
+  requestFriend: (user_id: number) =>
+    post<{ message: string }>('/users/friends', { user_id }),
+
+  acceptFriend: (friendship_id: number) =>
+    post<{ message: string }>(`/users/friends/${friendship_id}/accept`, {}),
+
+  removeFriend: (friendship_id: number) =>
+    del<{ message: string }>(`/users/friends/${friendship_id}`),
 };

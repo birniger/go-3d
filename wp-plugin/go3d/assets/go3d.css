@@ -259,6 +259,40 @@
   padding: 1.1rem 1.25rem;
 }
 .go3d-panel h3 { margin: 0 0 0.85rem; color: var(--go3d-text); font-size: 1.05rem; }
+.go3d-panel h4 { margin: 0.4rem 0 0.55rem; color: var(--go3d-cyan); font-size: 0.86rem; text-transform: uppercase; letter-spacing: 0.08em; }
+
+.go3d-social-search {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) auto;
+  align-items: end;
+  margin-bottom: 0.85rem;
+}
+.go3d-social-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+.go3d-social-list {
+  display: grid;
+  gap: 0.45rem;
+}
+.go3d-social-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  padding: 0.55rem 0.65rem;
+  background: rgba(5, 6, 10, 0.42);
+  border: 1px solid rgba(0, 229, 255, 0.16);
+  border-radius: 9px;
+}
+.go3d-social-row > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 
 /* ── Tables ──────────────────────────────────────────────────────────────── */
 .go3d-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
@@ -864,6 +898,16 @@
 
   .go3d-notif-card {
     align-items: flex-start;
+  }
+
+  .go3d-social-grid,
+  .go3d-social-search {
+    grid-template-columns: 1fr;
+  }
+
+  .go3d-social-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

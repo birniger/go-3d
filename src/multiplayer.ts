@@ -11,7 +11,7 @@
  * to know about Pusher or the API directly.
  */
 
-import { Games, GameState, MovePayload, GameOverPayload, PlayerJoinedPayload, ApiError, Config } from './api';
+import { Games, GameState, MovePayload, GameOverPayload, PlayerJoinedPayload, UndoRequestPayload, UndoAppliedPayload, UndoDeclinedPayload, ApiError, Config } from './api';
 import { AuthState } from './auth';
 
 // Pusher is loaded via a CDN <script> tag injected by the shortcode.
@@ -39,6 +39,9 @@ export interface MultiplayerCallbacks {
   onError:     (msg: string) => void;
   onClockTick: (p1Ms: number | null, p2Ms: number | null) => void;
   onConnectionStatus?: (status: ConnectionStatus) => void;
+  onUndoRequest?: (payload: UndoRequestPayload) => void;
+  onUndoApplied?: (state: GameState) => void;
+  onUndoDeclined?: (payload: UndoDeclinedPayload) => void;
   /** Stack mode: fired by the polling fallback when the active layer advances. */
   onLayerChange?: (layer: number) => void;
 }
@@ -64,6 +67,7 @@ export class MultiplayerController {
 
   /** Stack mode: last known active layer (used to detect advances when polling). */
   private activeLayer: number;
+  private seenUndoRequest: string | null = null;
 
   constructor(gameState: GameState, private callbacks: MultiplayerCallbacks) {
     this.gameState    = gameState;
@@ -100,6 +104,9 @@ export class MultiplayerController {
     this.channel.bind('move',          (d: unknown) => this.handleMove(d as MovePayload));
     this.channel.bind('game-over',     (d: unknown) => this.handleGameOver(d as GameOverPayload));
     this.channel.bind('player-joined', (d: unknown) => this.handlePlayerJoined(d as PlayerJoinedPayload));
+    this.channel.bind('undo-request',  (d: unknown) => this.handleUndoRequest(d as UndoRequestPayload));
+    this.channel.bind('undo-applied',  (d: unknown) => this.handleUndoApplied(d as UndoAppliedPayload));
+    this.channel.bind('undo-declined', (d: unknown) => this.callbacks.onUndoDeclined?.(d as UndoDeclinedPayload));
     this.channel.bind('pusher:subscription_error', () => {
       console.warn('Go3D: Pusher subscription failed — using polling fallback.');
       this.callbacks.onError('Realtime sync unavailable; using polling fallback.');
@@ -161,6 +168,26 @@ export class MultiplayerController {
     }
   }
 
+  async requestUndo(): Promise<GameState | null> {
+    try {
+      await Games.requestUndo(this.gameState.id);
+      return null;
+    } catch (e) {
+      this.callbacks.onError(e instanceof ApiError ? e.message : 'Undo request failed.');
+      throw e;
+    }
+  }
+
+  async respondUndo(accept: boolean): Promise<GameState | null> {
+    try {
+      const res = await Games.respondUndo(this.gameState.id, accept);
+      return res.state;
+    } catch (e) {
+      this.callbacks.onError(e instanceof ApiError ? e.message : 'Undo response failed.');
+      throw e;
+    }
+  }
+
   // ── Pusher event handlers ─────────────────────────────────────────────────
 
   private handleMove(payload: MovePayload): void {
@@ -187,6 +214,18 @@ export class MultiplayerController {
   private handleGameOver(payload: GameOverPayload): void {
     this.stopClock();
     this.callbacks.onGameOver(payload);
+  }
+
+  private handleUndoRequest(payload: UndoRequestPayload): void {
+    const key = `${payload.requester_id}:${payload.move_number}`;
+    if (key === this.seenUndoRequest) return;
+    this.seenUndoRequest = key;
+    this.callbacks.onUndoRequest?.(payload);
+  }
+
+  private handleUndoApplied(payload: UndoAppliedPayload): void {
+    this.stopClock();
+    this.callbacks.onUndoApplied?.(payload.state);
   }
 
   // ── Clock ─────────────────────────────────────────────────────────────────
@@ -247,6 +286,16 @@ export class MultiplayerController {
       const state = await Games.get(this.gameState.id);
       this.pollFailures = 0;
       this.callbacks.onConnectionStatus?.('polling');
+
+      if (state.moves.length < this.pollMoveNumber) {
+        this.callbacks.onUndoApplied?.(state);
+        this.pollMoveNumber = state.moves.length;
+        return;
+      }
+
+      if (state.pending_undo && state.pending_undo.requester_id !== AuthState.user?.id) {
+        this.handleUndoRequest(state.pending_undo);
+      }
 
       if (this.gameState.status !== 'active' && state.status === 'active' && state.player2_id) {
         this.p1Ms = state.p1_time_ms;

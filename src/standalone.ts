@@ -30,23 +30,27 @@ function showScreen(id: 'go3d-local-setup' | 'go3d-game-screen'): void {
 
 /** Launch a hot-seat game from the setup form's normalised settings. */
 function startLocal(s: GameFormSettings): void {
+  const config: LocalGameConfig = {
+    mode:          s.mode,
+    board_size:    s.board_size,
+    scoring_mode:  s.scoring_mode,
+    komi:          s.komi,
+    time_control:  s.time_control,
+    time_settings: s.time_settings,
+  };
+  startLocalState(buildLocalState(config));
+}
+
+function startLocalState(state: ReturnType<typeof buildLocalState>): void {
   showScreen('go3d-game-screen');
   if (session) { session.dispose(); session = null; }
   try {
-    const config: LocalGameConfig = {
-      mode:          s.mode,
-      board_size:    s.board_size,
-      scoring_mode:  s.scoring_mode,
-      komi:          s.komi,
-      time_control:  s.time_control,
-      time_settings: s.time_settings,
-    };
-    const state    = buildLocalState(config);
     const onExit   = () => { session = null; showScreen('go3d-local-setup'); };
     const makeLocal: ControllerFactory = (st, c) => new LocalController(st, c);
+    const onReload = (next?: typeof state) => { if (next) startLocalState(next); };
     session = state.mode === 'sphere'
-      ? new SphereGameSession(state, onExit, makeLocal)
-      : new GameSession(state, onExit, makeLocal);
+      ? new SphereGameSession(state, onExit, makeLocal, onReload)
+      : new GameSession(state, onExit, makeLocal, onReload);
   } catch (e) {
     showToast(e instanceof Error ? e.message : 'Could not start game.', 'error');
     showScreen('go3d-local-setup');

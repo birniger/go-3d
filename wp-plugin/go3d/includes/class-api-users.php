@@ -40,6 +40,31 @@ class Go3D_API_Users {
             'callback'            => [ __CLASS__, 'update_notifications' ],
             'permission_callback' => '__return_true',
         ] );
+
+        register_rest_route( $ns, '/users/friends', [
+            [
+                'methods'             => 'GET',
+                'callback'            => [ __CLASS__, 'list_friends' ],
+                'permission_callback' => '__return_true',
+            ],
+            [
+                'methods'             => 'POST',
+                'callback'            => [ __CLASS__, 'request_friend' ],
+                'permission_callback' => '__return_true',
+            ],
+        ] );
+
+        register_rest_route( $ns, '/users/friends/(?P<id>\d+)/accept', [
+            'methods'             => 'POST',
+            'callback'            => [ __CLASS__, 'accept_friend' ],
+            'permission_callback' => '__return_true',
+        ] );
+
+        register_rest_route( $ns, '/users/friends/(?P<id>\d+)', [
+            'methods'             => 'DELETE',
+            'callback'            => [ __CLASS__, 'remove_friend' ],
+            'permission_callback' => '__return_true',
+        ] );
     }
 
     // ── Handlers ──────────────────────────────────────────────────────────────
@@ -145,5 +170,126 @@ class Go3D_API_Users {
 
         $wpdb->update( $wpdb->prefix . 'go3d_users', $updates, [ 'id' => $user_id ] );
         return Go3D_API::ok( [ 'message' => 'Notification preferences updated.' ] );
+    }
+
+    public static function list_friends( WP_REST_Request $req ): WP_REST_Response {
+        global $wpdb;
+        unset( $req );
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+
+        $f = $wpdb->prefix . 'go3d_friends';
+        $u = $wpdb->prefix . 'go3d_users';
+
+        $friends = $wpdb->get_results( $wpdb->prepare(
+            "SELECT fr.id AS friendship_id, u.id, u.username, u.avatar_url, u.elo, u.games_played
+             FROM $f fr
+             JOIN $u u ON u.id = IF(fr.requester_id = %d, fr.addressee_id, fr.requester_id)
+             WHERE (fr.requester_id = %d OR fr.addressee_id = %d) AND fr.status = 'accepted'
+             ORDER BY u.username ASC",
+            $user_id, $user_id, $user_id
+        ), ARRAY_A ) ?: [];
+
+        $incoming = $wpdb->get_results( $wpdb->prepare(
+            "SELECT fr.id AS friendship_id, u.id, u.username, u.avatar_url, u.elo, u.games_played
+             FROM $f fr
+             JOIN $u u ON u.id = fr.requester_id
+             WHERE fr.addressee_id = %d AND fr.status = 'pending'
+             ORDER BY fr.created_at DESC",
+            $user_id
+        ), ARRAY_A ) ?: [];
+
+        $outgoing = $wpdb->get_results( $wpdb->prepare(
+            "SELECT fr.id AS friendship_id, u.id, u.username, u.avatar_url, u.elo, u.games_played
+             FROM $f fr
+             JOIN $u u ON u.id = fr.addressee_id
+             WHERE fr.requester_id = %d AND fr.status = 'pending'
+             ORDER BY fr.created_at DESC",
+            $user_id
+        ), ARRAY_A ) ?: [];
+
+        return Go3D_API::ok( [
+            'friends'  => array_map( [ __CLASS__, 'friend_row' ], $friends ),
+            'incoming' => array_map( [ __CLASS__, 'friend_row' ], $incoming ),
+            'outgoing' => array_map( [ __CLASS__, 'friend_row' ], $outgoing ),
+        ] );
+    }
+
+    public static function request_friend( WP_REST_Request $req ): WP_REST_Response {
+        global $wpdb;
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+        $target_id = (int)$req->get_param( 'user_id' );
+        if ( $target_id <= 0 || $target_id === $user_id ) return Go3D_API::error( 'Pick another verified user.', 422 );
+        $target = Go3D_Auth::get_user( $target_id );
+        if ( ! $target || ! (int)$target['email_verified'] ) return Go3D_API::error( 'User not found.', 404 );
+
+        $t = $wpdb->prefix . 'go3d_friends';
+        $existing = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM $t WHERE (requester_id = %d AND addressee_id = %d) OR (requester_id = %d AND addressee_id = %d) LIMIT 1",
+            $user_id, $target_id, $target_id, $user_id
+        ), ARRAY_A );
+
+        if ( $existing ) {
+            if ( $existing['status'] === 'accepted' ) return Go3D_API::ok( [ 'message' => 'Already friends.' ] );
+            if ( (int)$existing['requester_id'] === $target_id ) {
+                $wpdb->update( $t, [
+                    'status'       => 'accepted',
+                    'responded_at' => current_time( 'mysql', true ),
+                ], [ 'id' => (int)$existing['id'] ] );
+                return Go3D_API::ok( [ 'message' => 'Friend request accepted.' ] );
+            }
+            return Go3D_API::ok( [ 'message' => 'Friend request already sent.' ] );
+        }
+
+        $wpdb->insert( $t, [
+            'requester_id' => $user_id,
+            'addressee_id' => $target_id,
+            'status'       => 'pending',
+            'created_at'   => current_time( 'mysql', true ),
+        ] );
+
+        return Go3D_API::ok( [ 'message' => 'Friend request sent.' ], 201 );
+    }
+
+    public static function accept_friend( WP_REST_Request $req ): WP_REST_Response {
+        global $wpdb;
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+        $id = (int)$req->get_param( 'id' );
+        $updated = $wpdb->update( $wpdb->prefix . 'go3d_friends', [
+            'status'       => 'accepted',
+            'responded_at' => current_time( 'mysql', true ),
+        ], [
+            'id'           => $id,
+            'addressee_id' => $user_id,
+            'status'       => 'pending',
+        ] );
+        if ( $updated !== 1 ) return Go3D_API::error( 'Friend request not found.', 404 );
+        return Go3D_API::ok( [ 'message' => 'Friend request accepted.' ] );
+    }
+
+    public static function remove_friend( WP_REST_Request $req ): WP_REST_Response {
+        global $wpdb;
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+        $id = (int)$req->get_param( 'id' );
+        $deleted = $wpdb->query( $wpdb->prepare(
+            "DELETE FROM {$wpdb->prefix}go3d_friends WHERE id = %d AND (requester_id = %d OR addressee_id = %d)",
+            $id, $user_id, $user_id
+        ) );
+        if ( $deleted !== 1 ) return Go3D_API::error( 'Friend relationship not found.', 404 );
+        return Go3D_API::ok( [ 'message' => 'Friend removed.' ] );
+    }
+
+    private static function friend_row( array $r ): array {
+        return [
+            'friendship_id' => (int)$r['friendship_id'],
+            'id'            => (int)$r['id'],
+            'username'      => $r['username'],
+            'avatar_url'    => $r['avatar_url'],
+            'elo'           => (int)$r['elo'],
+            'games_played'  => (int)$r['games_played'],
+        ];
     }
 }

@@ -11,7 +11,7 @@
  */
 
 import { AuthState } from './auth';
-import { Users, GameState, MovePayload, GameOverPayload, PlayerJoinedPayload, SphereGeometry } from './api';
+import { Users, GameState, MovePayload, GameOverPayload, PlayerJoinedPayload, SphereGeometry, UndoRequestPayload } from './api';
 import { Go3D } from './game';
 import { Renderer } from './renderer';
 import { SphereRenderer } from './sphere-renderer';
@@ -284,6 +284,7 @@ export class GameSession {
     private state: GameState,
     private onExit: () => void,
     makeController: ControllerFactory = serverController,
+    private onReload?: (state?: GameState) => void,
   ) {
     this.game = new Go3D(state.board_size);
 
@@ -315,6 +316,9 @@ export class GameSession {
       onError:        m  => showToast(m, 'error'),
       onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
       onConnectionStatus: s => setConnectionStatus(s),
+      onUndoRequest:  p  => void this.handleUndoRequest(p),
+      onUndoApplied:  s  => this.reloadFromUndo(s),
+      onUndoDeclined: () => showToast('Undo request declined.', 'info'),
       onLayerChange:  l  => {
         this.activeLayer = l;
         this.renderer.setStackLayer(l);
@@ -373,6 +377,19 @@ export class GameSession {
     if (this.finished) return;
     if (!(await confirmModal('Resign this game? This counts as a loss.', { title: 'Resign', confirm: 'Resign', cancel: 'Keep playing', danger: true }))) return;
     try { await this.controller.submitResign(); } catch { /* surfaced via onError */ }
+  }
+
+  private async doUndo(): Promise<void> {
+    if (this.finished || this.state.moves.length === 0) return;
+    const msg = this.isLocal
+      ? 'Undo the latest local move?'
+      : 'Ask your opponent to undo your latest move?';
+    if (!(await confirmModal(msg, { title: 'Undo', confirm: this.isLocal ? 'Undo move' : 'Request undo', cancel: 'Cancel', danger: false }))) return;
+    try {
+      const state = await this.controller.requestUndo();
+      if (state) this.reloadFromUndo(state);
+      else showToast('Undo request sent.', 'info');
+    } catch { /* surfaced via onError */ }
   }
 
   // ── Applying moves (single source of truth) ─────────────────────────────────
@@ -469,6 +486,27 @@ export class GameSession {
     this.fillPlayerBar();
     this.refreshTurnUI();
     showToast('Your opponent has joined!', 'success');
+  }
+
+  private async handleUndoRequest(p: UndoRequestPayload): Promise<void> {
+    if (this.isLocal || p.requester_id === AuthState.user?.id) return;
+    const ok = await confirmModal(`${p.requester_name} wants to undo move ${p.move_number}. Accept?`, {
+      title: 'Undo request',
+      confirm: 'Accept undo',
+      cancel: 'Decline',
+      danger: false,
+    });
+    try {
+      const state = await this.controller.respondUndo(ok);
+      if (state) this.reloadFromUndo(state);
+      else if (!ok) showToast('Undo declined.', 'info');
+    } catch { /* surfaced via onError */ }
+  }
+
+  private reloadFromUndo(state?: GameState): void {
+    showToast('Undo applied.', 'success');
+    if (this.onReload) this.onReload(state);
+    else this.dispose();
   }
 
   // ── View controls: slice / camera / cursor / score / replay ─────────────────
@@ -772,6 +810,7 @@ export class GameSession {
   }
 
   private bindButtons(): void {
+    document.getElementById('go3d-undo-btn')!.onclick   = () => void this.doUndo();
     document.getElementById('go3d-pass-btn')!.onclick   = () => void this.doPass();
     document.getElementById('go3d-resign-btn')!.onclick = () => void this.doResign();
     document.getElementById('go3d-back-to-lobby-game')!.onclick = () => this.exit();
@@ -851,6 +890,7 @@ export class SphereGameSession {
     private state: GameState,
     private onExit: () => void,
     makeController: ControllerFactory = serverController,
+    private onReload?: (state?: GameState) => void,
   ) {
     if (!state.geometry) throw new Error('Sphere game has no geometry.');
     this.board       = (state.board as number[]).slice();
@@ -871,6 +911,9 @@ export class SphereGameSession {
       onError:        m  => showToast(m, 'error'),
       onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
       onConnectionStatus: s => setConnectionStatus(s),
+      onUndoRequest:  p  => void this.handleUndoRequest(p),
+      onUndoApplied:  s  => this.reloadFromUndo(s),
+      onUndoDeclined: () => showToast('Undo request declined.', 'info'),
     };
     this.controller = makeController(state, callbacks);
     this.controller.connect();
@@ -939,6 +982,19 @@ export class SphereGameSession {
     if (this.finished) return;
     if (!(await confirmModal('Resign this game? This counts as a loss.', { title: 'Resign', confirm: 'Resign', cancel: 'Keep playing', danger: true }))) return;
     try { await this.controller.submitResign(); } catch { /* surfaced via onError */ }
+  }
+
+  private async doUndo(): Promise<void> {
+    if (this.finished || this.state.moves.length === 0) return;
+    const msg = this.isLocal
+      ? 'Undo the latest local move?'
+      : 'Ask your opponent to undo your latest move?';
+    if (!(await confirmModal(msg, { title: 'Undo', confirm: this.isLocal ? 'Undo move' : 'Request undo', cancel: 'Cancel', danger: false }))) return;
+    try {
+      const state = await this.controller.requestUndo();
+      if (state) this.reloadFromUndo(state);
+      else showToast('Undo request sent.', 'info');
+    } catch { /* surfaced via onError */ }
   }
 
   private applyMove(p: MovePayload): void {
@@ -1012,6 +1068,27 @@ export class SphereGameSession {
     this.fillPlayerBar();
     this.refreshTurnUI();
     showToast('Your opponent has joined!', 'success');
+  }
+
+  private async handleUndoRequest(p: UndoRequestPayload): Promise<void> {
+    if (this.isLocal || p.requester_id === AuthState.user?.id) return;
+    const ok = await confirmModal(`${p.requester_name} wants to undo move ${p.move_number}. Accept?`, {
+      title: 'Undo request',
+      confirm: 'Accept undo',
+      cancel: 'Decline',
+      danger: false,
+    });
+    try {
+      const state = await this.controller.respondUndo(ok);
+      if (state) this.reloadFromUndo(state);
+      else if (!ok) showToast('Undo declined.', 'info');
+    } catch { /* surfaced via onError */ }
+  }
+
+  private reloadFromUndo(state?: GameState): void {
+    showToast('Undo applied.', 'success');
+    if (this.onReload) this.onReload(state);
+    else this.dispose();
   }
 
   private setupSessionChrome(): void {
@@ -1095,6 +1172,7 @@ export class SphereGameSession {
   }
 
   private bindButtons(): void {
+    document.getElementById('go3d-undo-btn')!.onclick   = () => void this.doUndo();
     document.getElementById('go3d-pass-btn')!.onclick   = () => void this.doPass();
     document.getElementById('go3d-resign-btn')!.onclick = () => void this.doResign();
     document.getElementById('go3d-back-to-lobby-game')!.onclick = () => this.exit();

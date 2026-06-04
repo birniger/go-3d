@@ -241,6 +241,33 @@
         <p class="go3d-empty-msg" id="go3d-no-active-games" style="display:none;">No active games.</p>
       </section>
 
+      <!-- Friends and direct challenges -->
+      <section class="go3d-panel go3d-social-panel">
+        <h3>Friends &amp; challenges <button id="go3d-refresh-social" class="go3d-btn-ghost go3d-btn-sm">↻</button></h3>
+        <form id="go3d-user-search-form" class="go3d-form go3d-social-search">
+          <label>Find players
+            <input type="search" id="go3d-user-search-input" minlength="2" placeholder="Search username">
+          </label>
+          <button type="submit" class="go3d-btn-primary go3d-btn-sm">Search</button>
+        </form>
+        <div id="go3d-user-search-results" class="go3d-social-list"></div>
+        <div class="go3d-social-grid">
+          <div>
+            <h4>Friends</h4>
+            <div id="go3d-friends-list" class="go3d-social-list"></div>
+          </div>
+          <div>
+            <h4>Friend requests</h4>
+            <div id="go3d-friend-requests" class="go3d-social-list"></div>
+          </div>
+          <div>
+            <h4>Challenges</h4>
+            <div id="go3d-challenges-list" class="go3d-social-list"></div>
+          </div>
+        </div>
+        <p class="go3d-form-hint">Challenge buttons use the current settings from the New game form above.</p>
+      </section>
+
       <!-- Leaderboard -->
       <section class="go3d-panel">
         <h3>Leaderboard <button id="go3d-refresh-leaderboard" class="go3d-btn-ghost go3d-btn-sm">↻</button></h3>
@@ -361,6 +388,7 @@
 
     <!-- In-game action buttons (pass / resign) shown over the canvas -->
     <div id="go3d-game-actions">
+      <button id="go3d-undo-btn"   class="go3d-btn-ghost">Undo</button>
       <button id="go3d-pass-btn"   class="go3d-btn-ghost">Pass</button>
       <button id="go3d-resign-btn" class="go3d-btn-ghost go3d-btn-danger">Resign</button>
     </div>

@@ -19,6 +19,7 @@ function go3d_uninstall_site(): void {
         $wpdb->prefix . 'go3d_games',
         $wpdb->prefix . 'go3d_moves',
         $wpdb->prefix . 'go3d_challenges',
+        $wpdb->prefix . 'go3d_friends',
         $wpdb->prefix . 'go3d_notif_log',
     ];
     foreach ( $tables as $table ) {

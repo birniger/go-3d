@@ -3,7 +3,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 class Go3D_Database {
 
-    const DB_VERSION = '1.2';
+    const DB_VERSION = '1.3';
 
     /**
      * Run install() (dbDelta) whenever the stored schema version is behind the
@@ -127,6 +127,21 @@ class Go3D_Database {
             KEY idx_challenger  (challenger_id),
             KEY idx_challenged  (challenged_id),
             KEY idx_status      (status)
+        ) $charset;" );
+
+        // ── Friends ──────────────────────────────────────────────────────────
+        dbDelta( "CREATE TABLE {$wpdb->prefix}go3d_friends (
+            id            BIGINT(20)  NOT NULL AUTO_INCREMENT,
+            requester_id  BIGINT(20)  NOT NULL,
+            addressee_id  BIGINT(20)  NOT NULL,
+            status        VARCHAR(10) NOT NULL DEFAULT 'pending',
+            created_at    DATETIME    NOT NULL,
+            responded_at  DATETIME             DEFAULT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_pair (requester_id, addressee_id),
+            KEY idx_requester (requester_id),
+            KEY idx_addressee (addressee_id),
+            KEY idx_status    (status)
         ) $charset;" );
 
         // ── Notification log (prevents duplicate sends) ───────────────────────

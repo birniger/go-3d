@@ -29,6 +29,8 @@ export interface GameController {
   submitPlace(x: number, y?: number, z?: number): Promise<MovePayload | null>;
   submitPass(): Promise<MovePayload | null>;
   submitResign(): Promise<void>;
+  requestUndo(): Promise<GameState | null>;
+  respondUndo(accept: boolean): Promise<GameState | null>;
 }
 
 /** Settings for a new local game (gathered from the lobby new-game form). */
@@ -117,6 +119,8 @@ export class LocalController implements GameController {
         this.callbacks.onClockTick(Math.round(p1.timeLeft * 1000), Math.round(p2.timeLeft * 1000));
       this.clock.onFlag = (player) => this.timeoutLoss(player);
     }
+
+    if (state.moves.length > 0) this.rebuildFromMoves([...state.moves]);
   }
 
   get mySlot(): 1 | 2 { return this.currentPlayer; }
@@ -202,6 +206,16 @@ export class LocalController implements GameController {
     this.stopClockForMover();
     const winner = (3 - this.currentPlayer) as 1 | 2;
     this.callbacks.onGameOver(this.gameOver(winner, 'resign', null, null));
+  }
+
+  async requestUndo(): Promise<GameState | null> {
+    if (this.finished || this.state.moves.length === 0) return null;
+    this.rebuildAfterUndo();
+    return this.state;
+  }
+
+  async respondUndo(accept: boolean): Promise<GameState | null> {
+    return accept ? this.requestUndo() : null;
   }
 
   // ── Turn / clock plumbing ────────────────────────────────────────────────────
@@ -318,6 +332,67 @@ export class LocalController implements GameController {
     if (y !== undefined) rec.y = y;
     if (z !== undefined) rec.z = z;
     this.state.moves.push(rec);
+  }
+
+  private rebuildAfterUndo(): void {
+    this.state.moves.pop();
+    this.rebuildFromMoves([...this.state.moves]);
+  }
+
+  private rebuildFromMoves(moves: MoveRecord[]): void {
+    this.moveNumber = 0;
+    this.currentPlayer = 1;
+    this.consecutivePasses = 0;
+    this.activeLayer = 0;
+    this.p1Caps = 0;
+    this.p2Caps = 0;
+    this.finished = false;
+
+    if (this.mode === 'sphere') {
+      if (!this.state.geometry) throw new Error('Local sphere game has no geometry.');
+      this.graph = new GraphGo(this.adjacencyFromEdges(this.state.geometry.count, this.state.geometry.edges));
+      this.board = this.graph.getBoard();
+      this.historyHashes = [this.graph.hash()];
+    } else {
+      this.cube = new Go3D(this.size);
+    }
+
+    this.state.moves = [];
+    for (const m of moves) {
+      const mover = m.player_id as 1 | 2;
+      this.moveNumber = m.move_number - 1;
+      if (m.type === 'place' && m.x !== undefined) {
+        if (this.mode === 'sphere') {
+          const r = this.graph!.place(m.x, mover, this.historyHashes);
+          if (r.ok) {
+            this.historyHashes.push(r.hash);
+            this.board = r.board;
+            if (mover === 1) this.p1Caps += r.captured.length;
+            else this.p2Caps += r.captured.length;
+          }
+          this.recordMove('place', mover, m.x);
+        } else {
+          this.cube!.place(m.x, m.y!, m.z!);
+          this.recordMove('place', mover, m.x, m.y, m.z);
+        }
+        this.consecutivePasses = 0;
+      } else if (m.type === 'pass') {
+        if (this.mode !== 'sphere') this.cube!.pass();
+        this.recordMove('pass', mover);
+        this.consecutivePasses++;
+        if (this.mode === 'stack' && this.consecutivePasses >= 2 && this.activeLayer < this.size - 1) {
+          this.activeLayer++;
+          this.consecutivePasses = 0;
+        }
+      }
+      this.currentPlayer = (3 - mover) as 1 | 2;
+    }
+
+    this.moveNumber = this.state.moves.length;
+    this.state.current_player = this.currentPlayer;
+    this.state.active_layer = this.activeLayer;
+    this.state.consecutive_passes = this.consecutivePasses;
+    this.state.board = this.mode === 'sphere' ? this.board.slice() : this.cube!.board;
   }
 
   private adjacencyFromEdges(count: number, edges: [number, number][]): number[][] {

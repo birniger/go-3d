@@ -284,6 +284,97 @@ class Go3D_Game {
         return [ 'ok' => false, 'error' => 'Unknown move type.', 'code' => 422 ];
     }
 
+    public static function request_undo( int $game_id, int $user_id ): array {
+        $game = self::get_row( $game_id );
+        if ( ! $game ) return [ 'ok' => false, 'error' => 'Game not found.', 'code' => 404 ];
+        if ( $game['status'] !== 'active' ) return [ 'ok' => false, 'error' => 'Game is not active.', 'code' => 409 ];
+        $slot = self::player_slot( $game, $user_id );
+        if ( ! $slot ) return [ 'ok' => false, 'error' => 'You are not a player in this game.', 'code' => 403 ];
+
+        $moves = self::get_moves( $game_id );
+        $last  = end( $moves );
+        if ( ! $last ) return [ 'ok' => false, 'error' => 'There is no move to undo.', 'code' => 422 ];
+        if ( (int)$last['player_id'] !== $user_id ) {
+            return [ 'ok' => false, 'error' => 'Only the player who made the latest move can request undo.', 'code' => 403 ];
+        }
+
+        $user = Go3D_Auth::get_user( $user_id );
+        $payload = [
+            'requester_id'   => $user_id,
+            'requester_name' => $user ? $user['username'] : 'Opponent',
+            'move_number'    => (int)$last['move_number'],
+        ];
+        set_transient( self::undo_transient_key( $game_id ), $payload, 10 * MINUTE_IN_SECONDS );
+        Go3D_Pusher::trigger( "private-game-$game_id", 'undo-request', $payload );
+        return [ 'ok' => true ];
+    }
+
+    public static function respond_undo( int $game_id, int $user_id, bool $accept ): array {
+        global $wpdb;
+        $game = self::get_row( $game_id );
+        if ( ! $game ) return [ 'ok' => false, 'error' => 'Game not found.', 'code' => 404 ];
+        if ( $game['status'] !== 'active' ) return [ 'ok' => false, 'error' => 'Game is not active.', 'code' => 409 ];
+        if ( ! self::player_slot( $game, $user_id ) ) return [ 'ok' => false, 'error' => 'You are not a player in this game.', 'code' => 403 ];
+
+        $pending = get_transient( self::undo_transient_key( $game_id ) );
+        if ( ! is_array( $pending ) ) return [ 'ok' => false, 'error' => 'No undo request is pending.', 'code' => 404 ];
+        if ( (int)$pending['requester_id'] === $user_id ) {
+            return [ 'ok' => false, 'error' => 'The opponent must respond to the undo request.', 'code' => 403 ];
+        }
+
+        $moves = self::get_moves( $game_id );
+        $last  = end( $moves );
+        if ( ! $last || (int)$last['move_number'] !== (int)$pending['move_number'] || (int)$last['player_id'] !== (int)$pending['requester_id'] ) {
+            delete_transient( self::undo_transient_key( $game_id ) );
+            return [ 'ok' => false, 'error' => 'The undo request is no longer valid.', 'code' => 409 ];
+        }
+
+        if ( ! $accept ) {
+            delete_transient( self::undo_transient_key( $game_id ) );
+            Go3D_Pusher::trigger( "private-game-$game_id", 'undo-declined', [
+                'move_number' => (int)$last['move_number'],
+            ] );
+            return [ 'ok' => true ];
+        }
+
+        $wpdb->delete( $wpdb->prefix . 'go3d_moves', [
+            'game_id'     => $game_id,
+            'move_number' => (int)$last['move_number'],
+        ] );
+
+        $remaining = self::get_moves( $game_id );
+        $meta = self::rebuild_meta( $game, $remaining );
+
+        $p1_time_ms = $game['p1_time_ms'] !== null ? (int)$game['p1_time_ms'] : null;
+        $p2_time_ms = $game['p2_time_ms'] !== null ? (int)$game['p2_time_ms'] : null;
+        $refund_ms  = $last['time_ms'] !== null ? max( 0, (int)$last['time_ms'] ) : 0;
+        if ( $refund_ms > 0 && $game['time_control'] !== 'none' ) {
+            $mover_slot = self::player_slot( $game, (int)$last['player_id'] );
+            if ( $mover_slot === 1 && $p1_time_ms !== null ) $p1_time_ms += $refund_ms;
+            if ( $mover_slot === 2 && $p2_time_ms !== null ) $p2_time_ms += $refund_ms;
+        }
+
+        $wpdb->update( $wpdb->prefix . 'go3d_games', [
+            'current_player'     => $meta['current_player'],
+            'consecutive_passes' => $meta['consecutive_passes'],
+            'active_layer'       => $meta['active_layer'],
+            'board_hash'         => $meta['board_hash'],
+            'history_hashes'     => wp_json_encode( $meta['history_hashes'] ),
+            'p1_time_ms'         => $p1_time_ms,
+            'p2_time_ms'         => $p2_time_ms,
+            'last_move_at'       => $meta['last_move_at'],
+        ], [ 'id' => $game_id ] );
+
+        delete_transient( self::undo_transient_key( $game_id ) );
+        $state = self::get_state( $game_id );
+        Go3D_Pusher::trigger( "private-game-$game_id", 'undo-applied', [
+            'move_number' => (int)$last['move_number'],
+            'state'       => $state,
+        ] );
+
+        return [ 'ok' => true, 'state' => $state ];
+    }
+
     // ── Pass ─────────────────────────────────────────────────────────────────
 
     private static function handle_pass( array $game, int $user_id, int $player_slot, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms, array $byo = [] ): array {
@@ -806,6 +897,7 @@ class Go3D_Game {
             'board'              => $logic->get_board(),
             'geometry'           => $geometry,
             'moves'              => array_map( [ __CLASS__, 'sanitise_move' ], $moves ),
+            'pending_undo'       => self::pending_undo_for_state( $game_id ),
             'created_at'         => $game['created_at'],
             'last_move_at'       => $game['last_move_at'],
             'finished_at'        => $game['finished_at'],
@@ -931,6 +1023,63 @@ class Go3D_Game {
         if ( (int)$game['player1_id'] === $user_id ) return 1;
         if ( $game['player2_id'] && (int)$game['player2_id'] === $user_id ) return 2;
         return null;
+    }
+
+    private static function undo_transient_key( int $game_id ): string {
+        return "go3d_undo_$game_id";
+    }
+
+    private static function pending_undo_for_state( int $game_id ): ?array {
+        $pending = get_transient( self::undo_transient_key( $game_id ) );
+        if ( ! is_array( $pending ) ) return null;
+        return [
+            'requester_id'   => (int)$pending['requester_id'],
+            'requester_name' => $pending['requester_name'] ?? 'Opponent',
+            'move_number'    => (int)$pending['move_number'],
+        ];
+    }
+
+    private static function rebuild_meta( array $game, array $moves ): array {
+        $mode = $game['mode'] ?? 'cube';
+        $is_sphere = $mode === 'sphere';
+        if ( $is_sphere ) {
+            $logic = new Go3D_Graph_Logic( Go3D_Geodesic::adjacency( (int)$game['board_size'] ) );
+        } else {
+            $logic = new Go3D_Game_Logic( (int)$game['board_size'] );
+        }
+        $history = [ $logic->hash() ];
+        $active_layer = 0;
+        $consecutive = 0;
+        $current = 1;
+        $last_move_at = null;
+
+        foreach ( $moves as $m ) {
+            $slot = ( (int)$m['player_id'] === (int)$game['player1_id'] ) ? 1 : 2;
+            if ( $m['type'] === 'place' ) {
+                $result = $is_sphere
+                    ? $logic->place( (int)$m['x'], $slot, $history )
+                    : $logic->place( (int)$m['x'], (int)$m['y'], (int)$m['z'], $slot, $history );
+                if ( ! empty( $result['ok'] ) && isset( $result['hash'] ) ) $history[] = $result['hash'];
+                $consecutive = 0;
+            } elseif ( $m['type'] === 'pass' ) {
+                $consecutive++;
+                if ( $mode === 'stack' && $consecutive >= 2 && $active_layer < (int)$game['board_size'] - 1 ) {
+                    $active_layer++;
+                    $consecutive = 0;
+                }
+            }
+            $current = 3 - $slot;
+            $last_move_at = $m['created_at'];
+        }
+
+        return [
+            'current_player'     => $current,
+            'consecutive_passes' => $consecutive,
+            'active_layer'       => $active_layer,
+            'board_hash'         => end( $history ),
+            'history_hashes'     => $history,
+            'last_move_at'       => $last_move_at,
+        ];
     }
 
     private static function next_move_number( int $game_id ): int {

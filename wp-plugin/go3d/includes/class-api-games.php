@@ -54,6 +54,43 @@ class Go3D_API_Games {
             'callback'            => [ __CLASS__, 'submit_move' ],
             'permission_callback' => '__return_true',
         ] );
+
+        register_rest_route( $ns, '/games/(?P<id>\d+)/undo-request', [
+            'methods'             => 'POST',
+            'callback'            => [ __CLASS__, 'request_undo' ],
+            'permission_callback' => '__return_true',
+        ] );
+
+        register_rest_route( $ns, '/games/(?P<id>\d+)/undo-respond', [
+            'methods'             => 'POST',
+            'callback'            => [ __CLASS__, 'respond_undo' ],
+            'permission_callback' => '__return_true',
+        ] );
+
+        register_rest_route( $ns, '/challenges', [
+            [
+                'methods'             => 'GET',
+                'callback'            => [ __CLASS__, 'list_challenges' ],
+                'permission_callback' => '__return_true',
+            ],
+            [
+                'methods'             => 'POST',
+                'callback'            => [ __CLASS__, 'create_challenge' ],
+                'permission_callback' => '__return_true',
+            ],
+        ] );
+
+        register_rest_route( $ns, '/challenges/(?P<id>\d+)/accept', [
+            'methods'             => 'POST',
+            'callback'            => [ __CLASS__, 'accept_challenge' ],
+            'permission_callback' => '__return_true',
+        ] );
+
+        register_rest_route( $ns, '/challenges/(?P<id>\d+)/decline', [
+            'methods'             => 'POST',
+            'callback'            => [ __CLASS__, 'decline_challenge' ],
+            'permission_callback' => '__return_true',
+        ] );
     }
 
     // ── Handlers ──────────────────────────────────────────────────────────────
@@ -85,14 +122,7 @@ class Go3D_API_Games {
         $user_id = Go3D_JWT::current_user_id();
         if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
 
-        $settings = [
-            'board_size'   => $req->get_param( 'board_size' )   ?? 9,
-            'mode'         => $req->get_param( 'mode' )          ?? 'cube',
-            'scoring_mode' => $req->get_param( 'scoring_mode' ) ?? 'chinese',
-            'komi'         => $req->get_param( 'komi' )         ?? 6.5,
-            'time_control' => $req->get_param( 'time_control' ) ?? 'none',
-            'time_settings' => $req->get_param( 'time_settings' ) ?? null,
-        ];
+        $settings = self::settings_from_request( $req );
 
         $result = Go3D_Game::create( $user_id, $settings );
         if ( ! $result['ok'] ) return Go3D_API::error( $result['error'], $result['code'] );
@@ -151,5 +181,167 @@ class Go3D_API_Games {
             'event'   => $result['event'],
             'payload' => $result['payload'],
         ] );
+    }
+
+    public static function request_undo( WP_REST_Request $req ): WP_REST_Response {
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+        $result = Go3D_Game::request_undo( (int)$req->get_param( 'id' ), $user_id );
+        if ( ! $result['ok'] ) return Go3D_API::error( $result['error'], $result['code'] );
+        return Go3D_API::ok( [ 'message' => 'Undo request sent.' ] );
+    }
+
+    public static function respond_undo( WP_REST_Request $req ): WP_REST_Response {
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+        $accept = (bool)$req->get_param( 'accept' );
+        $result = Go3D_Game::respond_undo( (int)$req->get_param( 'id' ), $user_id, $accept );
+        if ( ! $result['ok'] ) return Go3D_API::error( $result['error'], $result['code'] );
+        return Go3D_API::ok( [
+            'message' => $accept ? 'Undo accepted.' : 'Undo declined.',
+            'state'   => $result['state'] ?? null,
+        ] );
+    }
+
+    public static function list_challenges( WP_REST_Request $req ): WP_REST_Response {
+        global $wpdb;
+        unset( $req );
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+
+        $c = $wpdb->prefix . 'go3d_challenges';
+        $u = $wpdb->prefix . 'go3d_users';
+        $select = "ch.id, ch.challenger_id, ch.challenged_id, ch.board_size, ch.mode, ch.scoring_mode, ch.komi, ch.time_control, ch.time_settings, ch.status, ch.game_id, ch.created_at, ch.expires_at";
+
+        $incoming = $wpdb->get_results( $wpdb->prepare(
+            "SELECT $select, u.username AS challenger_name, u.elo AS challenger_elo
+             FROM $c ch JOIN $u u ON u.id = ch.challenger_id
+             WHERE ch.challenged_id = %d AND ch.status = 'pending' AND ch.expires_at > UTC_TIMESTAMP()
+             ORDER BY ch.created_at DESC",
+            $user_id
+        ), ARRAY_A ) ?: [];
+
+        $outgoing = $wpdb->get_results( $wpdb->prepare(
+            "SELECT $select, u.username AS challenged_name, u.elo AS challenged_elo
+             FROM $c ch JOIN $u u ON u.id = ch.challenged_id
+             WHERE ch.challenger_id = %d AND ch.status = 'pending' AND ch.expires_at > UTC_TIMESTAMP()
+             ORDER BY ch.created_at DESC",
+            $user_id
+        ), ARRAY_A ) ?: [];
+
+        return Go3D_API::ok( [
+            'incoming' => array_map( [ __CLASS__, 'challenge_row' ], $incoming ),
+            'outgoing' => array_map( [ __CLASS__, 'challenge_row' ], $outgoing ),
+        ] );
+    }
+
+    public static function create_challenge( WP_REST_Request $req ): WP_REST_Response {
+        global $wpdb;
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+        $target_id = (int)$req->get_param( 'challenged_id' );
+        if ( $target_id <= 0 || $target_id === $user_id ) return Go3D_API::error( 'Pick another verified user.', 422 );
+        $target = Go3D_Auth::get_user( $target_id );
+        if ( ! $target || ! (int)$target['email_verified'] ) return Go3D_API::error( 'User not found.', 404 );
+        $settings = self::settings_from_request( $req );
+
+        $wpdb->insert( $wpdb->prefix . 'go3d_challenges', [
+            'challenger_id' => $user_id,
+            'challenged_id' => $target_id,
+            'board_size'    => $settings['board_size'],
+            'mode'          => $settings['mode'],
+            'scoring_mode'  => $settings['scoring_mode'],
+            'komi'          => $settings['komi'],
+            'time_control'  => $settings['time_control'],
+            'time_settings' => isset( $settings['time_settings'] ) ? wp_json_encode( $settings['time_settings'] ) : null,
+            'is_open'       => 0,
+            'status'        => 'pending',
+            'created_at'    => current_time( 'mysql', true ),
+            'expires_at'    => gmdate( 'Y-m-d H:i:s', time() + 7 * DAY_IN_SECONDS ),
+        ] );
+
+        return Go3D_API::ok( [ 'message' => 'Challenge sent.', 'challenge_id' => (int)$wpdb->insert_id ], 201 );
+    }
+
+    public static function accept_challenge( WP_REST_Request $req ): WP_REST_Response {
+        global $wpdb;
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+        $id = (int)$req->get_param( 'id' );
+        $t = $wpdb->prefix . 'go3d_challenges';
+        $ch = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM $t WHERE id = %d AND challenged_id = %d AND status = 'pending' AND expires_at > UTC_TIMESTAMP()",
+            $id, $user_id
+        ), ARRAY_A );
+        if ( ! $ch ) return Go3D_API::error( 'Challenge not found.', 404 );
+
+        $settings = [
+            'board_size'    => (int)$ch['board_size'],
+            'mode'          => $ch['mode'],
+            'scoring_mode'  => $ch['scoring_mode'],
+            'komi'          => (float)$ch['komi'],
+            'time_control'  => $ch['time_control'],
+            'time_settings' => $ch['time_settings'] ? json_decode( $ch['time_settings'], true ) : null,
+        ];
+        $created = Go3D_Game::create( (int)$ch['challenger_id'], $settings );
+        if ( ! $created['ok'] ) return Go3D_API::error( $created['error'], $created['code'] );
+        $joined = Go3D_Game::join( (int)$created['game_id'], $user_id );
+        if ( ! $joined['ok'] ) return Go3D_API::error( $joined['error'], $joined['code'] );
+
+        $wpdb->update( $t, [
+            'status'  => 'accepted',
+            'game_id' => (int)$created['game_id'],
+        ], [ 'id' => $id ] );
+
+        return Go3D_API::ok( [ 'message' => 'Challenge accepted.', 'game_id' => (int)$created['game_id'] ] );
+    }
+
+    public static function decline_challenge( WP_REST_Request $req ): WP_REST_Response {
+        global $wpdb;
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+        $id = (int)$req->get_param( 'id' );
+        $updated = $wpdb->update( $wpdb->prefix . 'go3d_challenges', [
+            'status' => 'declined',
+        ], [
+            'id'            => $id,
+            'challenged_id' => $user_id,
+            'status'        => 'pending',
+        ] );
+        if ( $updated !== 1 ) return Go3D_API::error( 'Challenge not found.', 404 );
+        return Go3D_API::ok( [ 'message' => 'Challenge declined.' ] );
+    }
+
+    private static function settings_from_request( WP_REST_Request $req ): array {
+        return [
+            'board_size'    => $req->get_param( 'board_size' )    ?? 9,
+            'mode'          => $req->get_param( 'mode' )          ?? 'cube',
+            'scoring_mode'  => $req->get_param( 'scoring_mode' )  ?? 'chinese',
+            'komi'          => $req->get_param( 'komi' )          ?? 6.5,
+            'time_control'  => $req->get_param( 'time_control' )  ?? 'none',
+            'time_settings' => $req->get_param( 'time_settings' ) ?? null,
+        ];
+    }
+
+    private static function challenge_row( array $r ): array {
+        return [
+            'id'              => (int)$r['id'],
+            'challenger_id'   => (int)$r['challenger_id'],
+            'challenged_id'   => $r['challenged_id'] ? (int)$r['challenged_id'] : null,
+            'challenger_name' => $r['challenger_name'] ?? null,
+            'challenger_elo'  => isset( $r['challenger_elo'] ) ? (int)$r['challenger_elo'] : null,
+            'challenged_name' => $r['challenged_name'] ?? null,
+            'challenged_elo'  => isset( $r['challenged_elo'] ) ? (int)$r['challenged_elo'] : null,
+            'board_size'      => (int)$r['board_size'],
+            'mode'            => $r['mode'],
+            'scoring_mode'    => $r['scoring_mode'],
+            'komi'            => (float)$r['komi'],
+            'time_control'    => $r['time_control'],
+            'time_settings'   => $r['time_settings'] ? json_decode( $r['time_settings'], true ) : null,
+            'status'          => $r['status'],
+            'game_id'         => $r['game_id'] ? (int)$r['game_id'] : null,
+            'created_at'      => $r['created_at'],
+            'expires_at'      => $r['expires_at'],
+        ];
     }
 }

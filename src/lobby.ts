@@ -5,7 +5,7 @@
  */
 
 import { AuthState, apiErrorMessage } from './auth';
-import { Games, Users, GameSummary, User, ApiError } from './api';
+import { Games, Users, GameSummary, User, FriendUser, Challenge, ApiError } from './api';
 import { formatClock } from './multiplayer';
 import { confirmModal } from './modal';
 import {
@@ -27,6 +27,7 @@ export class Lobby {
   private onScreenChange: ScreenChangeCallback;
   private presenceCleanup: (() => void) | null = null;
   private pendingVerifyEmail: string | null = null;
+  private readLobbySettings: (() => GameFormSettings) | null = null;
   /** A game id from a `?go3d_game=` deep link (e.g. a "your turn" email), routed
    *  into on the first lobby entry after auth, then consumed. */
   private pendingGameId: number | null = null;
@@ -233,9 +234,11 @@ export class Lobby {
 
     document.getElementById('go3d-refresh-open')!.addEventListener('click', () => void this.loadOpenGames());
     document.getElementById('go3d-refresh-leaderboard')?.addEventListener('click', () => void this.loadLeaderboard());
+    document.getElementById('go3d-refresh-social')?.addEventListener('click', () => void this.loadSocial());
 
     // Lobby new-game form: server "Create open game" + post-login "Play locally".
     const readLobby = bindGameForm(LOBBY_FORM_IDS);
+    this.readLobbySettings = readLobby;
     document.getElementById('go3d-new-game-form')!.addEventListener('submit', async e => {
       e.preventDefault();
       const s        = readLobby();
@@ -274,6 +277,11 @@ export class Lobby {
     document.getElementById('go3d-ls-back')?.addEventListener('click', () => {
       if (AuthState.user) void this.showLobby();
       else this.showAuth();
+    });
+
+    document.getElementById('go3d-user-search-form')?.addEventListener('submit', e => {
+      e.preventDefault();
+      void this.searchUsers();
     });
   }
 
@@ -317,7 +325,7 @@ export class Lobby {
     document.getElementById('go3d-lobby-elo')!.textContent      = String(user.elo);
 
     setScreen('lobby');
-    await Promise.all([this.loadOpenGames(), this.loadActiveGames(), this.loadLeaderboard()]);
+    await Promise.all([this.loadOpenGames(), this.loadActiveGames(), this.loadLeaderboard(), this.loadSocial()]);
   }
 
   private async loadLeaderboard(): Promise<void> {
@@ -457,6 +465,158 @@ export class Lobby {
       empty.style.display = '';
       empty.textContent = 'Could not load your games.';
     }
+  }
+
+  private async loadSocial(): Promise<void> {
+    const friendsEl = document.getElementById('go3d-friends-list');
+    const requestsEl = document.getElementById('go3d-friend-requests');
+    const challengesEl = document.getElementById('go3d-challenges-list');
+    if (!friendsEl || !requestsEl || !challengesEl || !AuthState.user) return;
+
+    try {
+      const [friends, challenges] = await Promise.all([Users.friends(), Games.challenges()]);
+      friendsEl.innerHTML = friends.friends.length
+        ? friends.friends.map(u => this.socialUserRow(u, true)).join('')
+        : '<p class="go3d-empty-msg">No friends yet. Search above to add one.</p>';
+
+      const incoming = friends.incoming.map(u => `
+        <div class="go3d-social-row">
+          <span>${escHtml(u.username)} <span class="go3d-elo-badge">${u.elo}</span></span>
+          <span>
+            <button class="go3d-btn-primary go3d-btn-sm go3d-accept-friend" data-id="${u.friendship_id}">Accept</button>
+            <button class="go3d-btn-ghost go3d-btn-sm go3d-remove-friend" data-id="${u.friendship_id}">Decline</button>
+          </span>
+        </div>`).join('');
+      const outgoing = friends.outgoing.map(u => `
+        <div class="go3d-social-row">
+          <span>${escHtml(u.username)} <span class="go3d-chip">pending</span></span>
+          <button class="go3d-btn-ghost go3d-btn-sm go3d-remove-friend" data-id="${u.friendship_id}">Cancel</button>
+        </div>`).join('');
+      requestsEl.innerHTML = incoming || outgoing
+        ? incoming + outgoing
+        : '<p class="go3d-empty-msg">No pending friend requests.</p>';
+
+      const challengeRows = [
+        ...challenges.incoming.map(c => this.challengeRow(c, true)),
+        ...challenges.outgoing.map(c => this.challengeRow(c, false)),
+      ].join('');
+      challengesEl.innerHTML = challengeRows || '<p class="go3d-empty-msg">No pending challenges.</p>';
+
+      friendsEl.querySelectorAll<HTMLButtonElement>('.go3d-challenge-user').forEach(btn => {
+        btn.addEventListener('click', () => void this.challengeUser(Number(btn.dataset.id)));
+      });
+      requestsEl.querySelectorAll<HTMLButtonElement>('.go3d-accept-friend').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          try { await Users.acceptFriend(Number(btn.dataset.id)); showToast('Friend added.', 'success'); await this.loadSocial(); }
+          catch (err) { showToast(apiErrorMessage(err), 'error'); }
+        });
+      });
+      requestsEl.querySelectorAll<HTMLButtonElement>('.go3d-remove-friend').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          try { await Users.removeFriend(Number(btn.dataset.id)); showToast('Request removed.', 'success'); await this.loadSocial(); }
+          catch (err) { showToast(apiErrorMessage(err), 'error'); }
+        });
+      });
+      challengesEl.querySelectorAll<HTMLButtonElement>('.go3d-accept-challenge').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          try {
+            const res = await Games.acceptChallenge(Number(btn.dataset.id));
+            showToast('Challenge accepted.', 'success');
+            this.onScreenChange('game', res.game_id);
+          } catch (err) { showToast(apiErrorMessage(err), 'error'); }
+        });
+      });
+      challengesEl.querySelectorAll<HTMLButtonElement>('.go3d-decline-challenge').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          try { await Games.declineChallenge(Number(btn.dataset.id)); showToast('Challenge declined.', 'success'); await this.loadSocial(); }
+          catch (err) { showToast(apiErrorMessage(err), 'error'); }
+        });
+      });
+    } catch {
+      friendsEl.innerHTML = '<p class="go3d-empty-msg">Could not load friends.</p>';
+      requestsEl.innerHTML = '';
+      challengesEl.innerHTML = '';
+    }
+  }
+
+  private async searchUsers(): Promise<void> {
+    const input = document.getElementById('go3d-user-search-input') as HTMLInputElement | null;
+    const results = document.getElementById('go3d-user-search-results');
+    if (!input || !results) return;
+    const q = input.value.trim();
+    if (q.length < 2) { results.innerHTML = '<p class="go3d-empty-msg">Type at least 2 characters.</p>'; return; }
+    try {
+      const { users } = await Users.search(q);
+      const mine = AuthState.user?.id;
+      results.innerHTML = users.filter(u => u.id !== mine).length
+        ? users.filter(u => u.id !== mine).map(u => this.searchUserRow(u)).join('')
+        : '<p class="go3d-empty-msg">No players found.</p>';
+      results.querySelectorAll<HTMLButtonElement>('.go3d-add-friend').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          try { await Users.requestFriend(Number(btn.dataset.id)); showToast('Friend request sent.', 'success'); await this.loadSocial(); }
+          catch (err) { showToast(apiErrorMessage(err), 'error'); }
+        });
+      });
+      results.querySelectorAll<HTMLButtonElement>('.go3d-challenge-user').forEach(btn => {
+        btn.addEventListener('click', () => void this.challengeUser(Number(btn.dataset.id)));
+      });
+    } catch (err) {
+      results.innerHTML = `<p class="go3d-empty-msg">${escHtml(apiErrorMessage(err))}</p>`;
+    }
+  }
+
+  private async challengeUser(userId: number): Promise<void> {
+    if (!this.readLobbySettings) return;
+    const s = this.readLobbySettings();
+    const settings: Parameters<typeof Games.challenge>[1] = {
+      board_size: s.board_size,
+      mode: s.mode,
+      scoring_mode: s.scoring_mode,
+      komi: s.komi,
+      time_control: s.time_control,
+    };
+    if (s.time_settings) settings.time_settings = s.time_settings;
+    try {
+      await Games.challenge(userId, settings);
+      showToast('Challenge sent.', 'success');
+      await this.loadSocial();
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    }
+  }
+
+  private socialUserRow(u: FriendUser, challenge: boolean): string {
+    return `
+      <div class="go3d-social-row">
+        <span>${escHtml(u.username)} <span class="go3d-elo-badge">${u.elo}</span></span>
+        ${challenge ? `<button class="go3d-btn-primary go3d-btn-sm go3d-challenge-user" data-id="${u.id}">Challenge</button>` : ''}
+      </div>`;
+  }
+
+  private searchUserRow(u: User): string {
+    return `
+      <div class="go3d-social-row">
+        <span>${escHtml(u.username)} <span class="go3d-elo-badge">${u.elo}</span></span>
+        <span>
+          <button class="go3d-btn-ghost go3d-btn-sm go3d-add-friend" data-id="${u.id}">Add friend</button>
+          <button class="go3d-btn-primary go3d-btn-sm go3d-challenge-user" data-id="${u.id}">Challenge</button>
+        </span>
+      </div>`;
+  }
+
+  private challengeRow(c: Challenge, incoming: boolean): string {
+    const name = incoming ? (c.challenger_name ?? 'Opponent') : (c.challenged_name ?? 'Opponent');
+    const elo = incoming ? c.challenger_elo : c.challenged_elo;
+    return `
+      <div class="go3d-social-row">
+        <span>${incoming ? 'From' : 'To'} ${escHtml(name)} ${elo ? `<span class="go3d-elo-badge">${elo}</span>` : ''}<br>
+          <span class="go3d-form-hint">${challengeLabel(c)}</span>
+        </span>
+        ${incoming
+          ? `<span><button class="go3d-btn-primary go3d-btn-sm go3d-accept-challenge" data-id="${c.id}">Accept</button>
+             <button class="go3d-btn-ghost go3d-btn-sm go3d-decline-challenge" data-id="${c.id}">Decline</button></span>`
+          : '<span class="go3d-chip">pending</span>'}
+      </div>`;
   }
 
   private async loadProfile(userId: number): Promise<void> {
@@ -599,4 +759,10 @@ function boardLabel(g: GameSummary): string {
   if (mode === 'sphere') return `Sphere ${10 * g.board_size * g.board_size + 2} <span class="go3d-chip">sphere</span>`;
   if (mode === 'stack')  return `${g.board_size}³ <span class="go3d-chip">stack</span>`;
   return `${g.board_size}³`;
+}
+
+function challengeLabel(c: Challenge): string {
+  if (c.mode === 'sphere') return `Sphere ${10 * c.board_size * c.board_size + 2} · ${c.time_control}`;
+  const mode = c.mode === 'stack' ? ' stack' : '';
+  return `${c.board_size}³${mode} · ${c.time_control}`;
 }
