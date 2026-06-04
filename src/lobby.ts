@@ -505,12 +505,17 @@ export class Lobby {
           <details class="go3d-panel">
             <summary>Notification settings</summary>
             <form id="go3d-notif-form" class="go3d-form">
-              <label>Idle reminder after
-                <input type="number" name="notify_idle_hours" value="${user.notify_idle_hours ?? 24}" min="0" max="168"> hours (0 = off)
+              <label class="go3d-notif-card">
+                <span>
+                  <span class="go3d-notif-title">24h correspondence reminder</span>
+                  <span class="go3d-notif-copy">Optional email only when it is your turn and no move has been played for 24 hours.</span>
+                </span>
+                <span class="go3d-toggle">
+                  <input type="checkbox" name="idle_reminder" ${(user.notify_idle_hours ?? 24) > 0 ? 'checked' : ''}>
+                  <span class="go3d-toggle-slider" aria-hidden="true"></span>
+                </span>
               </label>
-              <label>Timeout warning when less than
-                <input type="number" name="notify_timeout_mins" value="${user.notify_timeout_mins ?? 60}" min="0" max="1440"> minutes remain (0 = off)
-              </label>
+              <p class="go3d-form-hint">Game-result and clock-warning emails are off. Verification and password reset emails still work.</p>
               <div class="go3d-form-error"></div>
               <button type="submit" class="go3d-btn-primary">Save</button>
             </form>
@@ -545,11 +550,10 @@ export class Lobby {
         document.getElementById('go3d-notif-form')!.addEventListener('submit', async e => {
           e.preventDefault();
           const form      = e.currentTarget as HTMLFormElement;
-          const idleHours = Number((form.elements.namedItem('notify_idle_hours') as HTMLInputElement).value);
-          const toMins    = Number((form.elements.namedItem('notify_timeout_mins') as HTMLInputElement).value);
+          const idleOn    = (form.elements.namedItem('idle_reminder') as HTMLInputElement).checked;
           const errEl     = form.querySelector<HTMLElement>('.go3d-form-error')!;
           try {
-            await Users.updateNotifications({ notify_idle_hours: idleHours, notify_timeout_mins: toMins });
+            await Users.updateNotifications({ notify_idle_hours: idleOn ? 24 : 0, notify_timeout_mins: 0 });
             errEl.style.color = '#0f0';
             errEl.textContent = '✓ Saved.';
           } catch (err) {

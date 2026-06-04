@@ -30,12 +30,15 @@ interface PusherChannel {
 
 // ── Callbacks ─────────────────────────────────────────────────────────────────
 
+export type ConnectionStatus = 'live' | 'polling' | 'reconnecting' | 'local';
+
 export interface MultiplayerCallbacks {
   onMove:      (payload: MovePayload) => void;
   onGameOver:  (payload: GameOverPayload) => void;
   onPlayerJoined: (payload: PlayerJoinedPayload) => void;
   onError:     (msg: string) => void;
   onClockTick: (p1Ms: number | null, p2Ms: number | null) => void;
+  onConnectionStatus?: (status: ConnectionStatus) => void;
   /** Stack mode: fired by the polling fallback when the active layer advances. */
   onLayerChange?: (layer: number) => void;
 }
@@ -83,6 +86,7 @@ export class MultiplayerController {
     }
 
     const token = localStorage.getItem('go3d_token') ?? '';
+    this.callbacks.onConnectionStatus?.('reconnecting');
     this.pusher = new Pusher(key, {
       cluster:      Config.pusherCluster,
       authEndpoint: Config.authEndpoint,
@@ -90,6 +94,9 @@ export class MultiplayerController {
     });
 
     this.channel = this.pusher.subscribe(`private-game-${this.gameState.id}`);
+    this.channel.bind('pusher:subscription_succeeded', () => {
+      this.callbacks.onConnectionStatus?.('live');
+    });
     this.channel.bind('move',          (d: unknown) => this.handleMove(d as MovePayload));
     this.channel.bind('game-over',     (d: unknown) => this.handleGameOver(d as GameOverPayload));
     this.channel.bind('player-joined', (d: unknown) => this.handlePlayerJoined(d as PlayerJoinedPayload));
@@ -217,10 +224,13 @@ export class MultiplayerController {
 
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private pollMoveNumber = 0;
+  private pollFailures = 0;
 
   private startPolling(): void {
     if (this.pollInterval !== null) return;
     this.pollMoveNumber = this.gameState.moves.length;
+    this.pollFailures = 0;
+    this.callbacks.onConnectionStatus?.('polling');
     this.pollInterval = setInterval(() => void this.poll(), 3000);
     if (this.gameState.time_control !== 'none' && this.gameState.status === 'active') this.startClock();
   }
@@ -235,6 +245,8 @@ export class MultiplayerController {
   private async poll(): Promise<void> {
     try {
       const state = await Games.get(this.gameState.id);
+      this.pollFailures = 0;
+      this.callbacks.onConnectionStatus?.('polling');
 
       if (this.gameState.status !== 'active' && state.status === 'active' && state.player2_id) {
         this.p1Ms = state.p1_time_ms;
@@ -291,7 +303,8 @@ export class MultiplayerController {
         this.handleGameOver(payload);
       }
     } catch {
-      // Ignore transient poll errors
+      this.pollFailures++;
+      if (this.pollFailures >= 2) this.callbacks.onConnectionStatus?.('reconnecting');
     }
   }
 }

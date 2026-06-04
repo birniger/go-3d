@@ -40,6 +40,46 @@
   max-width: 920px;
   margin: 0 auto;
   padding: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+#go3d-auth::before,
+#go3d-lobby::before,
+#go3d-profile::before,
+#go3d-local-setup::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.5;
+  background:
+    radial-gradient(circle at 88% 12%, rgba(0, 229, 255, 0.16), transparent 28%),
+    radial-gradient(circle at 8% 85%, rgba(25, 245, 160, 0.08), transparent 32%),
+    linear-gradient(rgba(0, 229, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 229, 255, 0.055) 1px, transparent 1px);
+  background-size: auto, auto, 42px 42px, 42px 42px;
+  animation: go3d-softgrid 18s linear infinite;
+}
+
+#go3d-lobby::after,
+#go3d-auth::after {
+  content: "";
+  position: absolute;
+  right: 2rem;
+  top: 5rem;
+  width: 11rem;
+  height: 11rem;
+  z-index: -1;
+  border: 1px solid rgba(0, 229, 255, 0.16);
+  transform: rotateX(58deg) rotateZ(35deg);
+  box-shadow: inset 0 0 32px rgba(0, 229, 255, 0.06), 0 0 40px rgba(0, 229, 255, 0.05);
+}
+
+@keyframes go3d-softgrid {
+  from { background-position: 0 0, 0 0, 0 0, 0 0; }
+  to   { background-position: 0 0, 0 0, 42px 42px, 42px 42px; }
 }
 
 /* ── Forms ───────────────────────────────────────────────────────────────── */
@@ -258,6 +298,54 @@
 }
 .go3d-bio { color: var(--go3d-muted); }
 
+.go3d-notif-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.08), rgba(255, 0, 119, 0.04));
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  border-radius: 12px;
+}
+.go3d-notif-title { display: block; color: var(--go3d-text); font-weight: 700; letter-spacing: 0.04em; }
+.go3d-notif-copy { display: block; margin-top: 0.25rem; color: var(--go3d-muted); font-size: 0.82rem; text-transform: none; letter-spacing: 0; }
+.go3d-toggle {
+  position: relative;
+  width: 58px;
+  height: 32px;
+  flex: 0 0 auto;
+}
+.go3d-toggle input { opacity: 0; width: 0; height: 0; }
+.go3d-toggle-slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: rgba(107, 118, 137, 0.22);
+  border: 1px solid var(--go3d-border);
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+.go3d-toggle-slider::before {
+  content: "";
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  left: 3px;
+  top: 3px;
+  border-radius: 50%;
+  background: var(--go3d-muted);
+  transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+.go3d-toggle input:checked + .go3d-toggle-slider {
+  background: rgba(25, 245, 160, 0.14);
+  border-color: rgba(25, 245, 160, 0.5);
+}
+.go3d-toggle input:checked + .go3d-toggle-slider::before {
+  transform: translateX(28px);
+  background: var(--go3d-green);
+  box-shadow: 0 0 14px rgba(25, 245, 160, 0.65);
+}
+
 /* ── Game screen ─────────────────────────────────────────────────────────── */
 #go3d-game-screen { position: fixed; inset: 0; z-index: 99999; pointer-events: none; }
 #go3d-game-screen > * { pointer-events: auto; }
@@ -279,6 +367,33 @@
 .go3d-stone-black { color: #111; text-shadow: 0 0 3px #000, 0 0 6px var(--go3d-cyan); }
 .go3d-stone-white { color: #fff; text-shadow: 0 0 6px var(--go3d-magenta); }
 .go3d-turn-label { color: var(--go3d-cyan); font-weight: 700; letter-spacing: 0.04em; }
+
+.go3d-connection-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: max-content;
+  border: 1px solid rgba(0, 229, 255, 0.24);
+  border-radius: 999px;
+  padding: 0.22rem 0.65rem;
+  color: var(--go3d-muted);
+  background: rgba(5, 6, 10, 0.7);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.go3d-connection-chip::before {
+  content: "";
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 9px currentColor;
+}
+.go3d-connection-live { color: var(--go3d-green); border-color: rgba(25, 245, 160, 0.45); }
+.go3d-connection-polling { color: #ffcc00; border-color: rgba(255, 204, 0, 0.4); }
+.go3d-connection-reconnecting { color: var(--go3d-danger); border-color: rgba(255, 59, 48, 0.55); }
+.go3d-connection-local { color: var(--go3d-cyan); }
 
 #go3d-clock-bar { display: flex; gap: 1rem; }
 .go3d-clock-cell { display: flex; flex-direction: column; align-items: flex-end; }
@@ -333,10 +448,73 @@
 /* ── Stack-mode layer banner ─────────────────────────────────────────────── */
 #go3d-layer-banner {
   position: absolute; top: 4.2rem; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 0.7rem;
   background: rgba(5, 6, 10, 0.8); border: 1px solid var(--go3d-border);
-  border-radius: 8px; padding: 0.35rem 0.9rem; z-index: 20;
+  border-radius: 10px; padding: 0.45rem 0.8rem; z-index: 20;
   color: var(--go3d-cyan); font-size: 0.85rem; letter-spacing: 0.03em;
 }
+.go3d-stack-label { white-space: nowrap; }
+.go3d-stack-blocks {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  width: 1.15rem;
+}
+.go3d-stack-block {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(107, 118, 137, 0.35);
+}
+.go3d-stack-block.active {
+  background: linear-gradient(90deg, var(--go3d-cyan), var(--go3d-green));
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.45);
+}
+
+/* ── Move history drawer ────────────────────────────────────────────────── */
+#go3d-move-history-drawer {
+  position: absolute;
+  top: 4.2rem;
+  left: 1rem;
+  z-index: 30;
+  width: min(20rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 8rem);
+  overflow: hidden;
+  background: rgba(5, 6, 10, 0.88);
+  border: 1px solid rgba(0, 229, 255, 0.24);
+  border-radius: 14px;
+  padding: 0.85rem;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45), inset 0 0 18px rgba(0, 229, 255, 0.05);
+}
+.go3d-history-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.go3d-history-head h3 { margin: 0; color: var(--go3d-cyan); font-size: 1rem; }
+.go3d-history-kicker { color: var(--go3d-muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.12em; }
+#go3d-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: calc(100vh - 12rem);
+  overflow: auto;
+}
+#go3d-history-list li {
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid rgba(29, 36, 51, 0.6);
+}
+.go3d-history-num { color: var(--go3d-muted); font-variant-numeric: tabular-nums; }
+.go3d-history-player { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.go3d-history-p1 { color: var(--go3d-cyan); }
+.go3d-history-p2 { color: var(--go3d-magenta); }
+.go3d-history-detail { color: var(--go3d-muted); font-size: 0.8rem; }
 
 /* ── Replay bar ──────────────────────────────────────────────────────────── */
 #go3d-replay-bar {
@@ -346,6 +524,51 @@
   border-radius: 10px; padding: 0.35rem 0.7rem; z-index: 20;
 }
 #go3d-replay-status { font-variant-numeric: tabular-nums; color: var(--go3d-muted); min-width: 4em; text-align: center; }
+
+/* ── Mobile control bottom sheet ─────────────────────────────────────────── */
+#go3d-mobile-controls {
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 25;
+  display: none;
+}
+.go3d-mobile-handle {
+  width: 100%;
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  color: var(--go3d-text);
+  background: rgba(5, 6, 10, 0.86);
+  border: 1px solid rgba(0, 229, 255, 0.28);
+  border-radius: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  backdrop-filter: blur(8px);
+}
+#go3d-mobile-status {
+  color: var(--go3d-muted);
+  font-size: 0.75rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.go3d-mobile-panel {
+  display: none;
+  margin-top: 0.4rem;
+  padding: 0.7rem;
+  background: rgba(5, 6, 10, 0.9);
+  border: 1px solid rgba(0, 229, 255, 0.24);
+  border-radius: 14px;
+  backdrop-filter: blur(8px);
+}
+.go3d-mobile-panel-open { display: grid; gap: 0.55rem; }
+.go3d-mobile-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; }
+.go3d-mobile-note { color: var(--go3d-muted); font-size: 0.82rem; }
+#go3d-game-screen[data-go3d-mode="sphere"] .go3d-mobile-cube-only { display: none; }
+#go3d-game-screen:not([data-go3d-mode="sphere"]) .go3d-mobile-sphere-only { display: none; }
 
 /* ── Leaderboard ─────────────────────────────────────────────────────────── */
 #go3d-leaderboard-table .go3d-row-me { background: rgba(0, 229, 255, 0.08); }
@@ -542,3 +765,144 @@
   box-shadow: 0 0 14px rgba(0, 0, 0, 0.5), inset 0 0 10px rgba(0, 229, 255, 0.05);
 }
 #go3d-layer-banner { text-shadow: 0 0 8px rgba(0, 229, 255, 0.55); }
+
+/* ── Mobile layout ───────────────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  #go3d-auth,
+  #go3d-lobby,
+  #go3d-profile,
+  #go3d-local-setup {
+    padding: 1rem;
+  }
+
+  .go3d-lobby-header,
+  #go3d-game-topbar {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .go3d-user-bar,
+  #go3d-player-info {
+    width: 100%;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  #go3d-game-topbar {
+    gap: 0.45rem;
+    padding: 0.6rem 0.7rem;
+  }
+
+  .go3d-player-badge {
+    max-width: 40vw;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .go3d-turn-label {
+    font-size: 0.78rem;
+    text-align: center;
+  }
+
+  #go3d-clock-bar {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  #go3d-view-controls {
+    top: auto;
+    right: 0.75rem;
+    bottom: 5.2rem;
+    align-items: flex-end;
+  }
+
+  #go3d-slice-group,
+  #go3d-camera-group {
+    display: none !important;
+  }
+
+  #go3d-layer-banner {
+    top: auto;
+    left: 0.75rem;
+    bottom: 5.25rem;
+    transform: none;
+  }
+
+  #go3d-game-actions {
+    left: 0.75rem;
+    bottom: 5.25rem;
+    transform: none;
+  }
+
+  #go3d-replay-bar {
+    display: none !important;
+  }
+
+  #go3d-mobile-controls {
+    display: block;
+  }
+
+  .go3d-mobile-handle {
+    display: flex;
+  }
+
+  #go3d-move-history-drawer {
+    position: absolute;
+    top: auto;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 4.6rem;
+    width: auto;
+    max-height: 45vh;
+    border-radius: 18px 18px 12px 12px;
+  }
+
+  #go3d-history-list {
+    max-height: 30vh;
+  }
+
+  .go3d-notif-card {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 520px) {
+  .go3d-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .go3d-form-row {
+    flex-direction: column;
+  }
+
+  #go3d-game-actions {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  #go3d-view-controls {
+    bottom: 8.4rem;
+  }
+
+  #go3d-layer-banner {
+    bottom: 8.4rem;
+    max-width: 44vw;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #go3d-auth::before,
+  #go3d-lobby::before,
+  #go3d-profile::before,
+  #go3d-local-setup::before,
+  .go3d-logo,
+  .go3d-local-setup-panel,
+  .go3d-onboarding-card,
+  #go3d-game-topbar,
+  .go3d-turn-label {
+    animation: none;
+  }
+}

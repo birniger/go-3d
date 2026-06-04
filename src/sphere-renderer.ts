@@ -58,6 +58,7 @@ export class SphereRenderer {
 
   // Capture shrink animations
   private captureAnims: { mesh: THREE.Mesh; life: number }[] = [];
+  private rejectAnims: { mesh: THREE.Mesh; life: number }[] = [];
   // Territory overlay (shown at game end). Tracked so it can be disposed.
   private territoryMeshes: THREE.InstancedMesh[] = [];
   private territoryGeo: THREE.BufferGeometry | null = null;
@@ -310,8 +311,22 @@ export class SphereRenderer {
   }
 
   forbiddenFlash(node: number): void {
-    void node;
     this.sound.forbidden();
+    const p = this.nodePos[node];
+    if (!p) return;
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xff3028,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const geo = new THREE.TorusGeometry(this.stoneR * 1.35, 0.035, 8, 48);
+    const ring = new THREE.Mesh(geo, mat);
+    ring.position.copy(p.clone().multiplyScalar(1.012));
+    ring.lookAt(p.clone().multiplyScalar(2));
+    this.scene.add(ring);
+    this.rejectAnims.push({ mesh: ring, life: 0 });
   }
 
   playPlaceSound()            { this.sound.place(); }
@@ -657,6 +672,20 @@ export class SphereRenderer {
         this.scene.remove(a.mesh);
         (a.mesh.material as THREE.Material).dispose();
         this.captureAnims.splice(i, 1);
+      }
+    }
+
+    for (let i = this.rejectAnims.length - 1; i >= 0; i--) {
+      const a = this.rejectAnims[i]; a.life++;
+      const t = a.life / 22;
+      a.mesh.scale.setScalar(1 + t * 1.5);
+      const mat = a.mesh.material as THREE.MeshBasicMaterial;
+      mat.opacity = Math.max(0, 0.95 * (1 - t));
+      if (a.life >= 22) {
+        this.scene.remove(a.mesh);
+        a.mesh.geometry.dispose();
+        mat.dispose();
+        this.rejectAnims.splice(i, 1);
       }
     }
 

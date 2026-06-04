@@ -272,6 +272,7 @@
     <div id="go3d-game-topbar">
 
       <button id="go3d-back-to-lobby-game" class="go3d-btn-ghost">← Lobby</button>
+      <span id="go3d-connection-chip" class="go3d-connection-chip go3d-connection-local" aria-live="polite">Local</span>
 
       <div id="go3d-player-info">
         <!-- Player 1 (Black) -->
@@ -341,8 +342,22 @@
         <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-cam-iso"   title="Isometric view">Iso</button>
       </div>
       <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-score-btn" title="Estimate territory">Score</button>
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-history-toggle" title="Move history" aria-expanded="false">Moves</button>
       <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-help-btn" title="Controls &amp; keyboard shortcuts">?</button>
     </div>
+
+    <!-- Move history drawer — desktop side panel, mobile bottom sheet -->
+    <aside id="go3d-move-history-drawer" style="display:none;" aria-label="Move history">
+      <div class="go3d-history-head">
+        <div>
+          <span class="go3d-history-kicker">Timeline</span>
+          <h3>Move history</h3>
+        </div>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-history-close" title="Close move history">×</button>
+      </div>
+      <p id="go3d-history-empty" class="go3d-empty-msg">No moves yet.</p>
+      <ol id="go3d-history-list"></ol>
+    </aside>
 
     <!-- In-game action buttons (pass / resign) shown over the canvas -->
     <div id="go3d-game-actions">
@@ -359,6 +374,42 @@
       <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-replay-last"  title="Last move">⏭</button>
     </div>
 
+    <!-- Mobile controls — compact rail plus expandable precision panel -->
+    <div id="go3d-mobile-controls" style="display:none;">
+      <button type="button" id="go3d-mobile-toggle" class="go3d-mobile-handle" aria-expanded="false">
+        Controls <span id="go3d-mobile-status">Ready</span>
+      </button>
+      <div id="go3d-mobile-panel" class="go3d-mobile-panel">
+        <div class="go3d-mobile-row go3d-mobile-cube-only">
+          <span class="go3d-vc-label">Slice</span>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-slice-x">X</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-slice-y">Y</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-slice-z">Z</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-slice-prev">−</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-slice-next">+</button>
+        </div>
+        <div class="go3d-mobile-row go3d-mobile-cube-only">
+          <span class="go3d-vc-label">Cursor</span>
+          <button class="go3d-btn-ghost go3d-btn-sm" data-go3d-cursor="-1,0,0">←</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" data-go3d-cursor="1,0,0">→</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" data-go3d-cursor="0,0,-1">↑</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" data-go3d-cursor="0,0,1">↓</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" data-go3d-cursor="0,-1,0">Down</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" data-go3d-cursor="0,1,0">Up</button>
+          <button class="go3d-btn-primary go3d-btn-sm" id="go3d-mobile-place">Place</button>
+        </div>
+        <div class="go3d-mobile-row go3d-mobile-sphere-only">
+          <span class="go3d-vc-label">Sphere</span>
+          <span class="go3d-mobile-note">Rotate, then tap a visible empty node.</span>
+        </div>
+        <div class="go3d-mobile-row">
+          <span class="go3d-vc-label">Replay</span>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-replay-prev">Prev</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-replay-next">Next</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Waiting overlay — shown when it's the opponent's turn -->
     <div id="go3d-waiting-overlay" style="display:none;" aria-live="polite">
       Waiting for opponent…
@@ -367,14 +418,8 @@
     <!-- First-run onboarding overlay (dismissed; remembered in localStorage) -->
     <div id="go3d-onboarding" style="display:none;">
       <div class="go3d-onboarding-card">
-        <h3>Go³D — how to play</h3>
-        <ul>
-          <li><strong>Place a stone:</strong> click an empty point on the board.</li>
-          <li><strong>See inside (cube/stack):</strong> press <kbd>X</kbd>/<kbd>Y</kbd>/<kbd>Z</kbd> (or the <em>Slice</em> buttons) to cut a layer, then step it: <kbd>X</kbd> slice with <kbd>←</kbd>/<kbd>→</kbd>, <kbd>Z</kbd> slice with <kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Y</kbd> slice with <kbd>Q</kbd>/<kbd>E</kbd>. <kbd>Esc</kbd> exits.</li>
-          <li><strong>Keyboard cursor (no slice):</strong> arrow keys move a cursor; <kbd>Q</kbd>/<kbd>E</kbd> move up/down the vertical axis; <kbd>Enter</kbd> places a stone.</li>
-          <li><strong>Snap the camera:</strong> use the <em>View</em> buttons (Top / Front / Side / Iso).</li>
-          <li><strong>Score:</strong> the <em>Score</em> button shades estimated territory.</li>
-        </ul>
+        <h3 id="go3d-onboarding-title">Go³D — how to play</h3>
+        <ul id="go3d-onboarding-list"></ul>
         <button class="go3d-btn-primary" id="go3d-onboarding-dismiss">Got it</button>
       </div>
     </div>

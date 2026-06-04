@@ -124,6 +124,7 @@ export class LocalController implements GameController {
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   connect(): void {
+    this.callbacks.onConnectionStatus?.('local');
     if (this.clock) this.clock.startTurn(this.currentPlayer);
   }
 

@@ -19,6 +19,7 @@ import {
   MultiplayerController,
   MultiplayerCallbacks,
   MultiplayerClockDisplay,
+  ConnectionStatus,
 } from './multiplayer';
 import { GameController, LocalController, LocalGameConfig } from './local-controller';
 import { buildGeodesic } from './geodesic';
@@ -127,11 +128,29 @@ function resetViewControls(): void {
   show('go3d-view-controls', false);
   show('go3d-replay-bar', false);
   show('go3d-layer-banner', false);
+  show('go3d-move-history-drawer', false);
+  show('go3d-mobile-controls', false);
   for (const id of ['go3d-slice-x', 'go3d-slice-y', 'go3d-slice-z', 'go3d-score-btn']) {
     document.getElementById(id)?.classList.remove('go3d-vc-on');
   }
+  document.getElementById('go3d-game-screen')?.removeAttribute('data-go3d-mode');
+  document.getElementById('go3d-history-list')?.replaceChildren();
+  setConnectionStatus('local');
   setCaptureCounts(0, 0);
   setActiveGlow(1, true);
+}
+
+function setConnectionStatus(status: ConnectionStatus): void {
+  const el = document.getElementById('go3d-connection-chip');
+  if (!el) return;
+  const labels: Record<ConnectionStatus, string> = {
+    live: 'Live',
+    polling: 'Polling fallback',
+    reconnecting: 'Reconnecting',
+    local: 'Local',
+  };
+  el.textContent = labels[status];
+  el.className = `go3d-connection-chip go3d-connection-${status}`;
 }
 
 /** Open the help / keyboard-shortcuts overlay. */
@@ -146,10 +165,88 @@ function openHelpOverlay(): void {
   };
 }
 
+function setOnboardingMode(mode: GameState['mode']): void {
+  const title = document.getElementById('go3d-onboarding-title');
+  const body = document.getElementById('go3d-onboarding-list');
+  if (!body) return;
+  if (title) title.textContent = mode === 'sphere' ? 'Sphere mode controls' : mode === 'stack' ? 'Stack mode controls' : 'Cube mode controls';
+  const items = mode === 'sphere'
+    ? [
+        ['Place a stone', 'Tap or click an empty node on the visible side of the globe.'],
+        ['Read the surface', 'Rotate the sphere to inspect groups, liberties, and threats from every angle.'],
+        ['Forbidden moves', 'Illegal attempts play a sound and pulse the rejected node red.'],
+        ['Score', 'The Score button shades estimated territory when you want a quick read.'],
+      ]
+    : [
+        ['Place a stone', 'Click an empty point, or use the mobile precision controls to move a cursor and confirm.'],
+        ['See inside', 'Use X/Y/Z slice buttons, then step the active slice with arrows, Q/E, or the mobile slice controls.'],
+        ['Keyboard cursor', 'With no slice active, arrows move horizontally, Q/E move vertically, and Enter places.'],
+        mode === 'stack' ? ['Stack layers', 'Only the current build layer accepts stones; two passes advance to the next layer.'] : ['Camera', 'Snap to Top, Front, Side, or Iso whenever the 3D view gets busy.'],
+        ['Score', 'The Score button shades estimated territory.'],
+      ];
+  body.innerHTML = items.map(([head, text]) => `<li><strong>${head}:</strong> ${text}</li>`).join('');
+}
+
 /** Show the help overlay once on first run; remembered in localStorage. */
 function maybeShowOnboarding(): void {
   try { if (localStorage.getItem('go3d_onboarded')) return; } catch { /* private mode */ }
   openHelpOverlay();
+}
+
+function playerNameForMove(state: GameState, slot: 1 | 2): string {
+  return slot === 1 ? (state.player1_name || 'Black') : (state.player2_name || 'White');
+}
+
+function slotForPlayerId(state: GameState, playerId: number): 1 | 2 {
+  return state.player1_id === playerId ? 1 : 2;
+}
+
+function appendMoveRecord(state: GameState, p: MovePayload): void {
+  if (state.moves.some(m => m.move_number === p.move_number)) return;
+  const slot = p.player_slot as 1 | 2;
+  const record = {
+    move_number: p.move_number,
+    player_id: slot === 1 ? state.player1_id : (state.player2_id ?? state.player1_id),
+    type: (p.type === 'place' ? 'place' : 'pass') as 'place' | 'pass',
+    x: p.x,
+    y: p.y,
+    z: p.z,
+    created_at: new Date().toISOString(),
+  };
+  state.moves.push(record);
+}
+
+function renderMoveHistory(state: GameState): void {
+  const list = document.getElementById('go3d-history-list');
+  const empty = document.getElementById('go3d-history-empty');
+  if (!list || !empty) return;
+  list.replaceChildren();
+  empty.style.display = state.moves.length ? 'none' : '';
+  for (const m of state.moves) {
+    const slot = slotForPlayerId(state, m.player_id);
+    const row = document.createElement('li');
+    const num = document.createElement('span');
+    const player = document.createElement('span');
+    const detailEl = document.createElement('span');
+    const mode = state.mode ?? 'cube';
+    let detail = '';
+    if (m.type === 'place') {
+      detail = mode === 'sphere'
+        ? `Node ${m.x ?? '—'}`
+        : `(${m.x ?? '—'}, ${m.y ?? '—'}, ${m.z ?? '—'})`;
+    } else {
+      detail = m.type === 'resign' ? 'Resigned' : 'Passed';
+    }
+    num.className = 'go3d-history-num';
+    num.textContent = String(m.move_number);
+    player.className = `go3d-history-player go3d-history-p${slot}`;
+    player.textContent = playerNameForMove(state, slot);
+    detailEl.className = 'go3d-history-detail';
+    detailEl.textContent = detail;
+    row.append(num, player, detailEl);
+    list.appendChild(row);
+  }
+  list.scrollTop = list.scrollHeight;
 }
 
 // ── Active game session ─────────────────────────────────────────────────────
@@ -217,6 +314,7 @@ export class GameSession {
       onPlayerJoined: p  => this.handlePlayerJoined(p),
       onError:        m  => showToast(m, 'error'),
       onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
+      onConnectionStatus: s => setConnectionStatus(s),
       onLayerChange:  l  => {
         this.activeLayer = l;
         this.renderer.setStackLayer(l);
@@ -229,10 +327,12 @@ export class GameSession {
 
     this.bindButtons();
     this.setupViewControls();
+    this.setupSessionChrome();
     this.fillPlayerBar();
     this.refreshTurnUI();
     this.updateCaptureCounts();
     setActiveGlow(this.currentTurn, this.finished);
+    renderMoveHistory(this.state);
     if (this.activeLayer !== null) this.updateLayerBanner();
     window.addEventListener('keydown', this.keyHandler);
     window.addEventListener('mousemove', this.mouseHandler);
@@ -285,6 +385,7 @@ export class GameSession {
   private applyMove(p: MovePayload): void {
     if (p.move_number <= this.appliedMoves) return;
     this.appliedMoves = p.move_number;
+    appendMoveRecord(this.state, p);
 
     if (p.type === 'place' && p.x !== undefined) {
       const placed = this.game.place(p.x, p.y!, p.z!);
@@ -326,6 +427,7 @@ export class GameSession {
     this.updateCaptureCounts();
     setActiveGlow(this.currentTurn, this.finished);
     if (this.scoreShowing) this.refreshScore();
+    renderMoveHistory(this.state);
     this.refreshTurnUI();
   }
 
@@ -403,6 +505,7 @@ export class GameSession {
       this.renderer.setSlice(axis, this.sliceIndex);
     }
     this.markSliceButtons();
+    this.updateMobileStatus();
   }
 
   private markSliceButtons(): void {
@@ -491,6 +594,7 @@ export class GameSession {
         break;
       case 'p': case 'P': void this.doPass(); break;
     }
+    this.updateMobileStatus();
   }
 
   // ── Replay (finished games) ─────────────────────────────────────────────────
@@ -507,6 +611,8 @@ export class GameSession {
     bind('go3d-replay-prev',  () => this.gotoReplayStep(this.replayStep - 1));
     bind('go3d-replay-next',  () => this.gotoReplayStep(this.replayStep + 1));
     bind('go3d-replay-last',  () => this.gotoReplayStep(this.state.moves.length));
+    bind('go3d-mobile-replay-prev', () => this.gotoReplayStep(this.replayStep - 1));
+    bind('go3d-mobile-replay-next', () => this.gotoReplayStep(this.replayStep + 1));
     this.replayActive = true;
     this.replayStep = this.state.moves.length;
     this.renderer.setReplayMode(true);
@@ -534,6 +640,8 @@ export class GameSession {
   private updateReplayStatus(): void {
     const el = document.getElementById('go3d-replay-status');
     if (el) el.textContent = `${this.replayStep} / ${this.state.moves.length}`;
+    const mobile = document.getElementById('go3d-mobile-status');
+    if (mobile && this.replayActive) mobile.textContent = `Replay ${this.replayStep} / ${this.state.moves.length}`;
   }
 
   private updateCaptureCounts(): void {
@@ -544,8 +652,89 @@ export class GameSession {
     const el = document.getElementById('go3d-layer-banner');
     if (!el) return;
     if (this.state.mode !== 'stack' || this.activeLayer === null) { el.style.display = 'none'; return; }
+    const activeLayer = this.activeLayer;
     el.style.display = '';
-    el.textContent = `Building layer ${this.activeLayer + 1} of ${this.game.size}`;
+    const blocks = Array.from({ length: this.game.size }, (_, i) =>
+      `<span class="go3d-stack-block${i <= activeLayer ? ' active' : ''}" aria-hidden="true"></span>`).join('');
+    el.innerHTML = `
+      <span class="go3d-stack-label">Layer ${activeLayer + 1} / ${this.game.size}</span>
+      <span class="go3d-stack-blocks">${blocks}</span>`;
+    this.updateMobileStatus();
+  }
+
+  private setupSessionChrome(): void {
+    document.getElementById('go3d-game-screen')?.setAttribute('data-go3d-mode', this.state.mode ?? 'cube');
+    setOnboardingMode(this.state.mode ?? 'cube');
+    show('go3d-mobile-controls', true);
+    const historyToggle = document.getElementById('go3d-history-toggle') as HTMLButtonElement | null;
+    const historyClose = document.getElementById('go3d-history-close') as HTMLButtonElement | null;
+    const drawer = document.getElementById('go3d-move-history-drawer');
+    const toggleHistory = () => {
+      if (!drawer) return;
+      const open = drawer.style.display === 'none' || drawer.style.display === '';
+      drawer.style.display = open ? 'block' : 'none';
+      historyToggle?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    if (historyToggle) historyToggle.onclick = toggleHistory;
+    if (historyClose) historyClose.onclick = () => {
+      if (drawer) drawer.style.display = 'none';
+      historyToggle?.setAttribute('aria-expanded', 'false');
+    };
+
+    const mobileToggle = document.getElementById('go3d-mobile-toggle') as HTMLButtonElement | null;
+    const mobilePanel = document.getElementById('go3d-mobile-panel');
+    if (mobileToggle && mobilePanel) {
+      mobileToggle.onclick = () => {
+        const open = mobilePanel.classList.toggle('go3d-mobile-panel-open');
+        mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+    }
+    const bind = (id: string, fn: () => void) => {
+      const el = document.getElementById(id) as HTMLButtonElement | null;
+      if (el) el.onclick = fn;
+    };
+    bind('go3d-mobile-slice-x', () => this.toggleSlice('x'));
+    bind('go3d-mobile-slice-y', () => this.toggleSlice('y'));
+    bind('go3d-mobile-slice-z', () => this.toggleSlice('z'));
+    bind('go3d-mobile-slice-prev', () => this.stepSlice(-1));
+    bind('go3d-mobile-slice-next', () => this.stepSlice(1));
+    bind('go3d-mobile-place', () => this.placeCursor());
+    document.querySelectorAll<HTMLButtonElement>('[data-go3d-cursor]').forEach(btn => {
+      btn.onclick = () => {
+        const [dx, dy, dz] = (btn.dataset.go3dCursor ?? '0,0,0').split(',').map(Number);
+        this.activateCursor();
+        this.renderer.moveCursor(dx, dy, dz);
+        this.updateMobileStatus();
+      };
+    });
+    this.updateMobileStatus();
+  }
+
+  private stepSlice(delta: number): void {
+    if (this.sliceMode === 'none') this.toggleSlice('z');
+    const axis = this.sliceMode;
+    if (axis === 'none') return;
+    this.sliceIndex = Math.max(0, Math.min(this.game.size - 1, this.sliceIndex + delta));
+    this.renderer.setSlice(axis, this.sliceIndex);
+    this.updateMobileStatus();
+  }
+
+  private placeCursor(): void {
+    this.activateCursor();
+    const pos = this.renderer.getCursorPos();
+    void this.doLocalPlace(pos.x, pos.y, pos.z);
+  }
+
+  private updateMobileStatus(): void {
+    const el = document.getElementById('go3d-mobile-status');
+    if (!el) return;
+    if (this.replayActive) {
+      el.textContent = `Replay ${this.replayStep} / ${this.state.moves.length}`;
+      return;
+    }
+    const layer = this.activeLayer !== null ? ` · Layer ${this.activeLayer + 1} / ${this.game.size}` : '';
+    const slice = this.sliceMode === 'none' ? 'No slice' : `${this.sliceMode.toUpperCase()} slice ${this.sliceIndex + 1} / ${this.game.size}`;
+    el.textContent = `${slice}${layer}`;
   }
 
   // ── UI ──────────────────────────────────────────────────────────────────────
@@ -681,15 +870,18 @@ export class SphereGameSession {
       onPlayerJoined: p  => this.handlePlayerJoined(p),
       onError:        m  => showToast(m, 'error'),
       onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
+      onConnectionStatus: s => setConnectionStatus(s),
     };
     this.controller = makeController(state, callbacks);
     this.controller.connect();
 
     this.bindButtons();
     this.setupViewControls();
+    this.setupSessionChrome();
     this.fillPlayerBar();
     this.refreshTurnUI();
     setActiveGlow(this.currentTurn, this.finished);
+    renderMoveHistory(this.state);
     maybeShowOnboarding();
     music.enterGame();
   }
@@ -752,6 +944,7 @@ export class SphereGameSession {
   private applyMove(p: MovePayload): void {
     if (p.move_number <= this.appliedMoves) return;
     this.appliedMoves = p.move_number;
+    appendMoveRecord(this.state, p);
 
     if (p.type === 'place' && p.x !== undefined) {
       const captured = (p.captured as number[] | undefined) ?? [];
@@ -779,6 +972,7 @@ export class SphereGameSession {
     }
     setActiveGlow(this.currentTurn, this.finished);
     if (this.scoreShowing) this.renderer.showTerritory(this.computeTerritory());
+    renderMoveHistory(this.state);
     this.refreshTurnUI();
   }
 
@@ -818,6 +1012,35 @@ export class SphereGameSession {
     this.fillPlayerBar();
     this.refreshTurnUI();
     showToast('Your opponent has joined!', 'success');
+  }
+
+  private setupSessionChrome(): void {
+    document.getElementById('go3d-game-screen')?.setAttribute('data-go3d-mode', 'sphere');
+    setOnboardingMode('sphere');
+    show('go3d-mobile-controls', true);
+    const historyToggle = document.getElementById('go3d-history-toggle') as HTMLButtonElement | null;
+    const historyClose = document.getElementById('go3d-history-close') as HTMLButtonElement | null;
+    const drawer = document.getElementById('go3d-move-history-drawer');
+    if (historyToggle) historyToggle.onclick = () => {
+      if (!drawer) return;
+      const open = drawer.style.display === 'none' || drawer.style.display === '';
+      drawer.style.display = open ? 'block' : 'none';
+      historyToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    if (historyClose) historyClose.onclick = () => {
+      if (drawer) drawer.style.display = 'none';
+      historyToggle?.setAttribute('aria-expanded', 'false');
+    };
+    const mobileToggle = document.getElementById('go3d-mobile-toggle') as HTMLButtonElement | null;
+    const mobilePanel = document.getElementById('go3d-mobile-panel');
+    if (mobileToggle && mobilePanel) {
+      mobileToggle.onclick = () => {
+        const open = mobilePanel.classList.toggle('go3d-mobile-panel-open');
+        mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+    }
+    const mobileStatus = document.getElementById('go3d-mobile-status');
+    if (mobileStatus) mobileStatus.textContent = 'Rotate the globe, then tap a visible empty node';
   }
 
   /** Flood-fill empty regions on the graph; region bordered by one colour = its territory. */

@@ -683,12 +683,6 @@ class Go3D_Game {
         ];
         Go3D_Pusher::trigger( "private-game-{$game['id']}", 'game-over', $payload );
 
-        // Queue result notifications
-        if ( $p2_id ) {
-            Go3D_Notifications::queue_result( (int)$game['id'], $p1_id, $winner_id );
-            Go3D_Notifications::queue_result( (int)$game['id'], $p2_id, $winner_id );
-        }
-
         return [ 'ok' => true, 'event' => 'game-over', 'payload' => $payload ];
     }
 
