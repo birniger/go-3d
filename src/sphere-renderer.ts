@@ -65,6 +65,24 @@ export class SphereRenderer {
   private hoverPhase = 0;
   private _rafId = 0;
 
+  // ── Exterior void FX (orbiting rig outside the globe) ──────────────────────
+  private fxReveal = 0;                 // 0 when the globe fills the view, →1 zoomed out
+  private _camDir  = new THREE.Vector3();
+  private _fxTmp   = new THREE.Vector3();
+  private fxRings: {
+    mesh: THREE.LineLoop; local: Float32Array; colorAttr: THREE.BufferAttribute;
+    base: [number, number, number]; spinAxis: THREE.Vector3; spin: number;
+  }[] = [];
+  private fxGlyphTex: THREE.Texture[] = [];
+  private fxGlyphs: {
+    spr: THREE.Sprite; u: THREE.Vector3; v: THREE.Vector3; r: number;
+    ang: number; speed: number; flick: number;
+  }[] = [];
+  private fxSparks: THREE.Points | null = null;
+  private fxSparkColor!: THREE.BufferAttribute;
+  private fxSparkPos!:   THREE.BufferAttribute;
+  private fxSparkData: { u: THREE.Vector3; v: THREE.Vector3; r: number; ang: number; speed: number; base: [number,number,number]; tw: number }[] = [];
+
   private onPlace: (node: number) => void;
 
   constructor(geo: GeoData, board: number[], onPlace: (node: number) => void) {
@@ -78,6 +96,7 @@ export class SphereRenderer {
     this.buildGlobe(geo);
     this.initStones(geo.count);
     this.updateStones();
+    this.initVoidFX();
     this.setupEvents();
     this.animate();
   }
@@ -118,7 +137,7 @@ export class SphereRenderer {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.07;
     this.controls.minDistance = this.radius * 1.25;
-    this.controls.maxDistance = this.radius * 6;
+    this.controls.maxDistance = this.radius * 8;   // room to dolly out and reveal the FX rig
     this.controls.enablePan = false;
   }
 
@@ -383,11 +402,227 @@ export class SphereRenderer {
     this.renderer.setSize(w, h); this.composer.setSize(w, h);
   };
 
+  // ── Exterior void FX ────────────────────────────────────────────────────────
+  /**
+   * Cyberpunk rig that orbits OUTSIDE the globe. Mirrors the cube renderer's
+   * approach: everything lives beyond the play surface (radius), fades out where
+   * it would cross the globe silhouette, and is gated behind zoom so a full-globe
+   * framing stays clean — the rig only reveals itself as you dolly out.
+   */
+  private initVoidFX() {
+    const R = this.radius;
+
+    // ── Orbit rings ── three tilted neon loops on far shells. Per-vertex colour
+    // lets us fade the arc that sweeps in front of the globe.
+    const SEG = 128;
+    const ringSpec: { rad: number; hue: number; tilt: [number, number, number]; spin: number }[] = [
+      { rad: R * 1.55, hue: 0x00e5ff, tilt: [0.95, 0.2, 0.0],  spin:  0.0016 },
+      { rad: R * 1.95, hue: 0xff0077, tilt: [0.15, 0.6, 0.78], spin: -0.0011 },
+      { rad: R * 2.35, hue: 0x1affa0, tilt: [0.5, -0.4, 0.55], spin:  0.0008 },
+    ];
+    for (const spec of ringSpec) {
+      const tilt = new THREE.Vector3(...spec.tilt).normalize();
+      // Build an orthonormal basis (u,v) spanning the ring plane (⟂ tilt).
+      const u = new THREE.Vector3();
+      const seed = Math.abs(tilt.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+      u.copy(seed).cross(tilt).normalize();
+      const v = new THREE.Vector3().crossVectors(tilt, u).normalize();
+      const local = new Float32Array(SEG * 3);
+      const colArr = new Float32Array(SEG * 3);
+      for (let i = 0; i < SEG; i++) {
+        const a = (i / SEG) * Math.PI * 2;
+        const x = u.x * Math.cos(a) * spec.rad + v.x * Math.sin(a) * spec.rad;
+        const y = u.y * Math.cos(a) * spec.rad + v.y * Math.sin(a) * spec.rad;
+        const z = u.z * Math.cos(a) * spec.rad + v.z * Math.sin(a) * spec.rad;
+        local[i*3] = x; local[i*3+1] = y; local[i*3+2] = z;
+      }
+      const g = new THREE.BufferGeometry();
+      const posAttr = new THREE.Float32BufferAttribute(local.slice(), 3);
+      const colorAttr = new THREE.Float32BufferAttribute(colArr, 3);
+      colorAttr.setUsage(THREE.DynamicDrawUsage);
+      g.setAttribute('position', posAttr);
+      g.setAttribute('color', colorAttr);
+      const mesh = new THREE.LineLoop(g, new THREE.LineBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      this.fxRings.push({
+        mesh, local, colorAttr: colorAttr as THREE.BufferAttribute,
+        base: this.hexRGB(spec.hue),
+        spinAxis: tilt.clone(), spin: spec.spin,
+      });
+    }
+
+    // ── Drifting glyph sprites ── flickering matrix/kanji on circular orbits.
+    const chars = ['ｱ','ﾂ','ﾈ','ﾜ','ﾔ','0','1','7','◇','#','>','零','弐','囲'];
+    for (const ch of chars) {
+      const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+      const ctx = cv.getContext('2d')!;
+      ctx.clearRect(0, 0, 64, 64);
+      ctx.font = 'bold 44px "Share Tech Mono", monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 8;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(ch, 32, 34);
+      this.fxGlyphTex.push(new THREE.CanvasTexture(cv));
+    }
+    const glyphHues = [0x00e5ff, 0xff0077, 0x1affa0];
+    for (let i = 0; i < 11; i++) {
+      const mat = new THREE.SpriteMaterial({
+        map: this.fxGlyphTex[(Math.random() * this.fxGlyphTex.length) | 0],
+        color: glyphHues[i % glyphHues.length], transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const spr = new THREE.Sprite(mat);
+      const sc = R * (0.14 + Math.random() * 0.1);
+      spr.scale.set(sc, sc, sc);
+      spr.frustumCulled = false;
+      this.scene.add(spr);
+      const u = new THREE.Vector3(), v = new THREE.Vector3();
+      this.fxRandomBasis(u, v);
+      this.fxGlyphs.push({
+        spr, u, v, r: R * (1.45 + Math.random() * 0.95),
+        ang: Math.random() * Math.PI * 2,
+        speed: (0.003 + Math.random() * 0.006) * (Math.random() < 0.5 ? 1 : -1),
+        flick: Math.random() * Math.PI * 2,
+      });
+    }
+
+    // ── Spark field ── slow neon embers orbiting the globe, per-vertex faded.
+    const N = 90;
+    const pos = new Float32Array(N * 3);
+    const col = new Float32Array(N * 3);
+    const sparkHues = [0x00e5ff, 0xff0077, 0x1affa0, 0x66e0ff];
+    for (let i = 0; i < N; i++) {
+      const u = new THREE.Vector3(), v = new THREE.Vector3();
+      this.fxRandomBasis(u, v);
+      this.fxSparkData.push({
+        u, v, r: R * (1.25 + Math.random() * 1.2),
+        ang: Math.random() * Math.PI * 2,
+        speed: (0.002 + Math.random() * 0.005) * (Math.random() < 0.5 ? 1 : -1),
+        base: this.hexRGB(sparkHues[(Math.random() * sparkHues.length) | 0]),
+        tw: Math.random() * Math.PI * 2,
+      });
+    }
+    const g = new THREE.BufferGeometry();
+    this.fxSparkPos   = new THREE.Float32BufferAttribute(pos, 3); this.fxSparkPos.setUsage(THREE.DynamicDrawUsage);
+    this.fxSparkColor = new THREE.Float32BufferAttribute(col, 3); this.fxSparkColor.setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('position', this.fxSparkPos);
+    g.setAttribute('color', this.fxSparkColor);
+    this.fxSparks = new THREE.Points(g, new THREE.PointsMaterial({
+      size: R * 0.05, vertexColors: true, transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+      sizeAttenuation: true,
+    }));
+    this.fxSparks.frustumCulled = false;
+    this.scene.add(this.fxSparks);
+  }
+
+  /** Random orthonormal basis (u,v) for a great-circle / orbit plane. */
+  private fxRandomBasis(u: THREE.Vector3, v: THREE.Vector3) {
+    const n = this._fxTmp.set(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
+    if (n.lengthSq() < 1e-3) n.set(0, 1, 0);
+    n.normalize();
+    const seed = Math.abs(n.y) < 0.9 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+    u.copy(seed).cross(n).normalize();
+    v.crossVectors(n, u).normalize();
+  }
+
+  private hexRGB(hex: number): [number, number, number] {
+    return [((hex >> 16) & 255)/255, ((hex >> 8) & 255)/255, (hex & 255)/255];
+  }
+
+  /**
+   * Fade factor (0..1) for a world point: 0 where it projects within the globe's
+   * on-screen footprint (would overlap the play surface from this view), 1 well
+   * outside it. Anchored to the current view direction so the clear zone tracks
+   * the camera.
+   */
+  private fxSilhouette(p: THREE.Vector3): number {
+    const d = p.dot(this._camDir);
+    const perp = Math.sqrt(Math.max(0, p.lengthSq() - d * d));
+    const inner = this.radius * 1.08, outer = this.radius * 1.55;
+    if (perp >= outer) return 1;
+    if (perp <= inner) return 0;
+    const t = (perp - inner) / (outer - inner);
+    return t * t * (3 - 2 * t);
+  }
+
+  private updateVoidFX() {
+    this._camDir.copy(this.camera.position).normalize();
+    if (this._camDir.lengthSq() < 1e-4) this._camDir.set(1, 0.6, 1).normalize();
+
+    // Zoom gate: hidden at normal framing, fades in only once you dolly out
+    // well past the globe — the rig is an ambient reward for leaning back.
+    const dist  = this.camera.position.length();
+    const start = this.radius * 4.7, full = this.radius * 6.6;
+    const t = Math.min(1, Math.max(0, (dist - start) / (full - start)));
+    this.fxReveal = t * t * (3 - 2 * t);
+    const reveal = this.fxReveal;
+
+    // Rings — spin in place; per-vertex colour faded by silhouette × reveal.
+    for (const ring of this.fxRings) {
+      ring.mesh.rotateOnAxis(ring.spinAxis, ring.spin);
+      ring.mesh.updateWorldMatrix(true, false);
+      const mw = ring.mesh.matrixWorld;
+      const col = ring.colorAttr.array as Float32Array;
+      const loc = ring.local;
+      const n = loc.length / 3;
+      const [br, bg, bb] = ring.base;
+      for (let i = 0; i < n; i++) {
+        const o = i * 3;
+        this._fxTmp.set(loc[o], loc[o+1], loc[o+2]).applyMatrix4(mw);
+        const k = reveal * this.fxSilhouette(this._fxTmp);
+        col[o] = br * k; col[o+1] = bg * k; col[o+2] = bb * k;
+      }
+      ring.colorAttr.needsUpdate = true;
+    }
+
+    // Glyphs — advance along their orbit, flicker, fade.
+    for (const gl of this.fxGlyphs) {
+      gl.ang += gl.speed;
+      gl.flick += 0.07;
+      const c = Math.cos(gl.ang) * gl.r, s = Math.sin(gl.ang) * gl.r;
+      gl.spr.position.set(
+        gl.u.x * c + gl.v.x * s,
+        gl.u.y * c + gl.v.y * s,
+        gl.u.z * c + gl.v.z * s,
+      );
+      const flick = 0.55 + 0.45 * Math.sin(gl.flick);
+      (gl.spr.material as THREE.SpriteMaterial).opacity =
+        flick * this.fxSilhouette(gl.spr.position) * reveal;
+    }
+
+    // Sparks — orbit + twinkle, per-vertex faded.
+    if (this.fxSparks) {
+      const pos = this.fxSparkPos.array as Float32Array;
+      const col = this.fxSparkColor.array as Float32Array;
+      for (let i = 0; i < this.fxSparkData.length; i++) {
+        const sp = this.fxSparkData[i];
+        sp.ang += sp.speed; sp.tw += 0.05;
+        const c = Math.cos(sp.ang) * sp.r, s = Math.sin(sp.ang) * sp.r;
+        const x = sp.u.x * c + sp.v.x * s;
+        const y = sp.u.y * c + sp.v.y * s;
+        const z = sp.u.z * c + sp.v.z * s;
+        const o = i * 3;
+        pos[o] = x; pos[o+1] = y; pos[o+2] = z;
+        const tw = 0.4 + 0.6 * Math.abs(Math.sin(sp.tw));
+        const k = reveal * tw * this.fxSilhouette(this._fxTmp.set(x, y, z));
+        col[o] = sp.base[0] * k; col[o+1] = sp.base[1] * k; col[o+2] = sp.base[2] * k;
+      }
+      this.fxSparkPos.needsUpdate = true;
+      this.fxSparkColor.needsUpdate = true;
+    }
+  }
+
   // ── Animate ───────────────────────────────────────────────────────────────
   private animate() {
     this._rafId = requestAnimationFrame(() => this.animate());
     this.hoverPhase += 0.05;
     this.controls.update();
+    this.updateVoidFX();
 
     // Hover ghost
     const node = this.interactive ? this.pickNode() : null;

@@ -196,6 +196,9 @@ export const Auth = {
   login: (email: string, password: string) =>
     post<{ token: string; user: User }>('/auth/login', { email, password }),
 
+  verifyCode: (email: string, code: string) =>
+    post<{ token: string; user: User }>('/auth/verify-code', { email, code }),
+
   requestReset: (email: string) =>
     post<{ message: string }>('/auth/request-reset', { email }),
 

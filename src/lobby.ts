@@ -25,6 +25,7 @@ type ScreenChangeCallback = (screen: Screen, data?: unknown) => void;
 export class Lobby {
   private onScreenChange: ScreenChangeCallback;
   private presenceCleanup: (() => void) | null = null;
+  private pendingVerifyEmail: string | null = null;
 
   constructor(onScreenChange: ScreenChangeCallback) {
     this.onScreenChange = onScreenChange;
@@ -69,15 +70,39 @@ export class Lobby {
       const email    = (form.elements.namedItem('email')    as HTMLInputElement).value;
       const pass     = (form.elements.namedItem('password') as HTMLInputElement).value;
       const errEl    = form.querySelector<HTMLElement>('.go3d-form-error')!;
+      errEl.style.color = '';
       errEl.textContent = '';
       try {
         await AuthState.register(username, email, pass);
-        errEl.style.color = '#0f0';
-        errEl.textContent = '✓ Account created! Check your email to verify, then log in.';
-        document.querySelector<HTMLButtonElement>('[data-tab="login"]')!.click();
+        this.showVerifyForm(email);
       } catch (err) {
         errEl.textContent = apiErrorMessage(err);
       }
+    });
+
+    // Email-verification code form (shown after registering)
+    document.getElementById('go3d-verify-form')!.addEventListener('submit', async e => {
+      e.preventDefault();
+      const form  = e.currentTarget as HTMLFormElement;
+      const code  = (form.elements.namedItem('code') as HTMLInputElement).value.trim();
+      const email = this.pendingVerifyEmail
+        ?? (document.getElementById('go3d-login-form')!
+              .querySelector<HTMLInputElement>('[name=email]')!.value);
+      const errEl = form.querySelector<HTMLElement>('.go3d-form-error')!;
+      errEl.style.color = '';
+      errEl.textContent = '';
+      try {
+        await AuthState.verifyCode(email, code);
+        this.hideVerifyForm();
+        await this.showLobby();
+      } catch (err) {
+        errEl.textContent = apiErrorMessage(err);
+      }
+    });
+    document.getElementById('go3d-verify-back')!.addEventListener('click', e => {
+      e.preventDefault();
+      this.hideVerifyForm();
+      document.querySelector<HTMLButtonElement>('[data-tab="login"]')!.click();
     });
 
     // Forgot password
@@ -116,6 +141,26 @@ export class Lobby {
     if (verified === '1') {
       showToast('Email verified! You can now log in.', 'success');
     }
+  }
+
+  /** Swap the auth panel from the register tab to the email-code entry form. */
+  private showVerifyForm(email: string): void {
+    this.pendingVerifyEmail = email;
+    document.querySelectorAll<HTMLElement>('.go3d-tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelector<HTMLElement>('.go3d-auth-tabs')!.style.display = 'none';
+    document.getElementById('go3d-forgot-form')!.style.display = 'none';
+    const emailEl = document.getElementById('go3d-verify-email');
+    if (emailEl) emailEl.textContent = email;
+    const form = document.getElementById('go3d-verify-form')!;
+    form.style.display = '';
+    form.querySelector<HTMLInputElement>('[name=code]')?.focus();
+  }
+
+  private hideVerifyForm(): void {
+    this.pendingVerifyEmail = null;
+    document.getElementById('go3d-verify-form')!.style.display = 'none';
+    document.querySelector<HTMLElement>('.go3d-auth-tabs')!.style.display = '';
+    document.querySelector<HTMLElement>('.go3d-tab-panel[data-tab="login"]')!.classList.add('active');
   }
 
   private showResetForm(token: string): void {

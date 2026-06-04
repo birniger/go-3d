@@ -55,6 +55,15 @@ export const AuthState = {
     return AuthAPI.register(username, email, password);
   },
 
+  /** Verify a sign-up with the emailed 6-digit code; logs the user in on success. */
+  async verifyCode(email: string, code: string): Promise<User> {
+    const res = await AuthAPI.verifyCode(email, code);
+    setToken(res.token);
+    _user = res.user;
+    notify();
+    return _user;
+  },
+
   async requestReset(email: string): Promise<void> {
     await AuthAPI.requestReset(email);
   },

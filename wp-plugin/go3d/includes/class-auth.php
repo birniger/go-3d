@@ -46,12 +46,14 @@ class Go3D_Auth {
         }
 
         $token  = bin2hex( random_bytes( 32 ) );
+        $code   = str_pad( (string) random_int( 0, 999999 ), 6, '0', STR_PAD_LEFT );
         $result = $wpdb->insert( $t, [
             'username'           => $username,
             'email'              => $email,
             'password_hash'      => password_hash( $password, PASSWORD_BCRYPT, [ 'cost' => 12 ] ),
             'email_verified'     => 0,
             'verification_token' => $token,
+            'verification_code'  => $code,
             'created_at'         => current_time( 'mysql', true ),
         ] );
 
@@ -66,7 +68,7 @@ class Go3D_Auth {
         set_transient( $key, $cnt + 1, DAY_IN_SECONDS );
 
         // Send verification email
-        self::send_verification_email( $user_id, $email, $username, $token );
+        self::send_verification_email( $user_id, $email, $username, $token, $code );
 
         return [ 'ok' => true, 'user_id' => $user_id ];
     }
@@ -121,8 +123,56 @@ class Go3D_Auth {
         $user = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM $t WHERE verification_token = %s", $token ), ARRAY_A );
         if ( ! $user ) return false;
 
-        $wpdb->update( $t, [ 'email_verified' => 1, 'verification_token' => null ], [ 'id' => $user['id'] ] );
+        $wpdb->update( $t, [ 'email_verified' => 1, 'verification_token' => null, 'verification_code' => null ], [ 'id' => $user['id'] ] );
         return true;
+    }
+
+    /**
+     * Verify an account using the 6-digit code sent at sign-up.
+     *
+     * @return array{ok:true,token:string,user:array}|array{ok:false,error:string,code:int}
+     */
+    public static function verify_email_code( string $email, string $code ): array {
+        global $wpdb;
+        $t = $wpdb->prefix . 'go3d_users';
+
+        // Rate limit code attempts: 10 per IP per 15 min
+        $ip  = sanitize_text_field( $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0' );
+        $key = 'go3d_vcode_' . md5( $ip );
+        $cnt = (int) get_transient( $key );
+        if ( $cnt >= 10 ) {
+            return [ 'ok' => false, 'error' => 'Too many attempts. Please wait 15 minutes.', 'code' => 429 ];
+        }
+
+        $email = sanitize_email( $email );
+        $code  = preg_replace( '/\D/', '', $code );
+
+        $user = $wpdb->get_row(
+            $wpdb->prepare( "SELECT * FROM $t WHERE email = %s", $email ),
+            ARRAY_A
+        );
+
+        if ( ! $user || ! hash_equals( (string) $user['verification_code'], (string) $code ) ) {
+            set_transient( $key, $cnt + 1, 15 * MINUTE_IN_SECONDS );
+            return [ 'ok' => false, 'error' => 'Invalid verification code.', 'code' => 400 ];
+        }
+
+        if ( (int) $user['email_verified'] ) {
+            // Already verified — just log them in.
+            $token = Go3D_JWT::encode( (int) $user['id'] );
+            return [ 'ok' => true, 'token' => $token, 'user' => self::public_user( $user ) ];
+        }
+
+        $wpdb->update( $t, [
+            'email_verified'     => 1,
+            'verification_token' => null,
+            'verification_code'  => null,
+        ], [ 'id' => $user['id'] ] );
+
+        // Issue a session token so the user lands straight in the lobby.
+        $token = Go3D_JWT::encode( (int) $user['id'] );
+        $user['email_verified'] = 1;
+        return [ 'ok' => true, 'token' => $token, 'user' => self::public_user( $user ) ];
     }
 
     // ── Password reset ────────────────────────────────────────────────────────
@@ -169,20 +219,20 @@ class Go3D_Auth {
 
     /** Strip private fields before sending to clients. */
     public static function public_user( array $user ): array {
-        unset( $user['password_hash'], $user['verification_token'], $user['reset_token'], $user['reset_expires'], $user['email'] );
+        unset( $user['password_hash'], $user['verification_token'], $user['verification_code'], $user['reset_token'], $user['reset_expires'], $user['email'] );
         return $user;
     }
 
     // ── Emails ───────────────────────────────────────────────────────────────
 
-    private static function send_verification_email( int $user_id, string $email, string $username, string $token ): void {
+    private static function send_verification_email( int $user_id, string $email, string $username, string $token, string $code ): void {
         $site  = get_option( 'go3d_site_name', get_bloginfo( 'name' ) );
         $from  = get_option( 'go3d_from_email', get_option( 'admin_email' ) );
         $fname = get_option( 'go3d_from_name',  $site );
         $url   = home_url( "/?go3d_verify=$token" );
 
         $subject = "Verify your $site game account";
-        $body    = "Hi $username,\n\nClick the link below to verify your email and start playing:\n\n$url\n\nThis link expires in 48 hours.\n\n— $site";
+        $body    = "Hi $username,\n\nYour verification code is:\n\n    $code\n\nEnter it in the app to activate your account.\n\nPrefer a link? You can also click here to verify:\n\n$url\n\nThis code and link expire in 48 hours.\n\n— $site";
 
         wp_mail( $email, $subject, $body, [
             "From: $fname <$from>",

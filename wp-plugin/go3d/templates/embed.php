@@ -29,6 +29,19 @@
       <button type="submit" class="go3d-btn-primary">Create account</button>
     </form>
 
+    <!-- Email verification code (shown after registering) -->
+    <form id="go3d-verify-form" class="go3d-form" style="display:none;" novalidate>
+      <h2>Verify your email</h2>
+      <p>We emailed a 6-digit code to <strong id="go3d-verify-email">your inbox</strong>. Enter it below to activate your account.</p>
+      <label>Verification code
+        <input type="text" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+               autocomplete="one-time-code" placeholder="123456" required>
+      </label>
+      <div class="go3d-form-error" aria-live="polite"></div>
+      <button type="submit" class="go3d-btn-primary">Verify &amp; sign in</button>
+      <p><a href="#" id="go3d-verify-back">Back to login</a></p>
+    </form>
+
     <!-- Password reset request -->
     <form id="go3d-forgot-form" class="go3d-form" style="display:none;" novalidate>
       <h2>Reset password</h2>

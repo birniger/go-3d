@@ -4,6 +4,50 @@
 
   <?php settings_errors( 'go3d_messages' ); ?>
 
+  <!-- ── Setup guide ─────────────────────────────────────────────── -->
+  <div class="go3d-setup-guide card" style="max-width:800px;padding:4px 20px 16px;margin:16px 0;">
+    <h2><?php esc_html_e( 'Quick setup guide', 'go3d' ); ?></h2>
+    <ol style="line-height:1.7;font-size:14px;">
+      <li>
+        <strong><?php esc_html_e( 'Add the game to a page.', 'go3d' ); ?></strong>
+        <?php
+          printf(
+            wp_kses(
+              __( 'Create or edit a page and insert the shortcode <code>%s</code>. By default it renders a “Play” button that opens the full-screen game in a new tab. Use <code>%s</code> to embed the game directly in the page instead.', 'go3d' ),
+              [ 'code' => [] ]
+            ),
+            '[go3d]',
+            '[go3d mode=&quot;inline&quot;]'
+          );
+        ?>
+      </li>
+      <li>
+        <strong><?php esc_html_e( 'Enable real-time play (recommended).', 'go3d' ); ?></strong>
+        <?php
+          printf(
+            wp_kses(
+              __( 'Create a free <a href="%s" target="_blank" rel="noopener">Pusher Channels</a> app and paste its App ID, Key, Secret and Cluster into the Pusher section below. Without it, the game falls back to slower HTTP polling.', 'go3d' ),
+              [ 'a' => [ 'href' => [], 'target' => [], 'rel' => [] ] ]
+            ),
+            'https://pusher.com'
+          );
+        ?>
+      </li>
+      <li>
+        <strong><?php esc_html_e( 'Configure account emails.', 'go3d' ); ?></strong>
+        <?php esc_html_e( 'Set the From name/email under Email / Notifications so sign-up verification codes and password-reset links are delivered. If your host blocks wp_mail(), install an SMTP plugin.', 'go3d' ); ?>
+      </li>
+      <li>
+        <strong><?php esc_html_e( 'Set up the cron trigger.', 'go3d' ); ?></strong>
+        <?php esc_html_e( 'Move timeouts and idle-game reminders run on a schedule. WP-Cron works out of the box on busy sites; for reliability set a Cron secret below and call the external cron URL every few minutes from your host.', 'go3d' ); ?>
+      </li>
+      <li>
+        <strong><?php esc_html_e( 'Players sign up.', 'go3d' ); ?></strong>
+        <?php esc_html_e( 'Each player registers an account in the game (used for fast move sync and ELO ratings), confirms the 6-digit code we email them, and starts playing. A no-account local hot-seat mode is also available for two players on one screen.', 'go3d' ); ?>
+      </li>
+    </ol>
+  </div>
+
   <form method="post" action="options.php">
     <?php settings_fields( 'go3d_options' ); ?>
 

@@ -1134,15 +1134,29 @@ export class Renderer {
     this.whiteAlpha.needsUpdate = true;
   }
 
-  // Per-dot colour: bright on active slice, near-invisible everywhere else
+  // Per-dot colour: bright on active slice, near-invisible everywhere else.
+  // In stack mode, layers above the active build layer are removed entirely
+  // (zero-scale instance matrix) so not even a black speck remains.
   private _updateDotVisibility() {
     const s = this.game.size;
     const col = new THREE.Color();
     const dotDefault = new THREE.Color(DOT_C);
+    const dummy = new THREE.Object3D();
     let idx = 0;
+    let matricesDirty = false;
     for (let x = 0; x < s; x++)
       for (let y = 0; y < s; y++)
         for (let z = 0; z < s; z++) {
+          // Stack mode hides everything above the active layer completely:
+          // collapse the instance to zero scale so it is not rendered at all.
+          const hiddenAbove = this.sliceAxis === 'none' &&
+                              this.stackLayer !== null && y > this.stackLayer;
+          dummy.position.set(this.coord(x), this.coord(y), this.coord(z));
+          dummy.scale.setScalar(hiddenAbove ? 0 : 1);
+          dummy.updateMatrix();
+          this.dotInst.setMatrixAt(idx, dummy.matrix);
+          matricesDirty = true;
+
           if (this.sliceAxis !== 'none') {
             const onSlice = (this.sliceAxis === 'x' && x === this.sliceIndex) ||
                             (this.sliceAxis === 'y' && y === this.sliceIndex) ||
@@ -1154,28 +1168,38 @@ export class Renderer {
               col.setScalar(0.03);   // nearly invisible off the plane
             }
           } else if (this.stackLayer !== null) {
-            // Stack mode: spotlight the active build layer, recede the rest of
-            // the lattice. On-layer points get a bright cyan highlight; built
-            // layers below stay faintly lit for context, unbuilt layers above
-            // fade back furthest.
+            // Stack mode: only the current build layer and the already-played
+            // layers below it are visible. On-layer points get a bright cyan
+            // highlight; built layers below stay faintly lit for context;
+            // unbuilt layers above are hidden (matrix collapsed above).
             if (y === this.stackLayer)      col.setHex(CYAN);
             else if (y < this.stackLayer)   col.copy(dotDefault).multiplyScalar(0.22);
-            else                            col.copy(dotDefault).multiplyScalar(0.08);
+            else                            col.setScalar(0);
           } else {
             col.copy(dotDefault);
           }
           this.dotInst.setColorAt(idx++, col);
         }
+    if (matricesDirty) this.dotInst.instanceMatrix.needsUpdate = true;
     if (this.dotInst.instanceColor) this.dotInst.instanceColor.needsUpdate = true;
   }
 
-  // Hoshi brightness: dim on slice, subtle otherwise
+  // Hoshi brightness: dim on slice, subtle otherwise. Stack mode collapses
+  // above-layer star points to zero scale so nothing renders there.
   private _updateHoshiVisibility() {
     if (!this.hoshiInst) return;
     const col = new THREE.Color();
     const hoshiDefault = new THREE.Color(0xffaa33);
+    const dummy = new THREE.Object3D();
     for (let i = 0; i < this.hoshiCoords.length; i++) {
       const { x, y, z } = this.hoshiCoords[i];
+      const hiddenAbove = this.sliceAxis === 'none' &&
+                          this.stackLayer !== null && y > this.stackLayer;
+      dummy.position.set(this.coord(x), this.coord(y), this.coord(z));
+      dummy.scale.setScalar(hiddenAbove ? 0 : 1);
+      dummy.updateMatrix();
+      this.hoshiInst.setMatrixAt(i, dummy.matrix);
+
       if (this.sliceAxis !== 'none') {
         const onSlice = (this.sliceAxis === 'x' && x === this.sliceIndex) ||
                         (this.sliceAxis === 'y' && y === this.sliceIndex) ||
@@ -1184,12 +1208,13 @@ export class Renderer {
       } else if (this.stackLayer !== null) {
         if (y === this.stackLayer)      col.setHex(0xffcc55);
         else if (y < this.stackLayer)   col.copy(hoshiDefault).multiplyScalar(0.22);
-        else                            col.copy(hoshiDefault).multiplyScalar(0.06);
+        else                            col.setScalar(0);
       } else {
         col.copy(hoshiDefault);
       }
       this.hoshiInst.setColorAt(i, col);
     }
+    this.hoshiInst.instanceMatrix.needsUpdate = true;
     if (this.hoshiInst.instanceColor) this.hoshiInst.instanceColor.needsUpdate = true;
   }
 

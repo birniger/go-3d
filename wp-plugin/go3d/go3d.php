@@ -70,6 +70,16 @@ add_action( 'plugins_loaded', function () {
     }
 } );
 
+// ── Full-screen app page (plain URL: /?go3d_app=1) ───────────────────────────
+// The [go3d] launch button opens this in a new tab. It renders a self-contained
+// full-screen document (independent of the active theme) hosting the auth →
+// lobby → game flow that talks to the REST backend.
+add_action( 'template_redirect', function () {
+    if ( isset( $_GET['go3d_app'] ) ) {
+        Go3D_Shortcode::render_app_page(); // prints the page and exits
+    }
+} );
+
 // ── Email verification redirect (plain URL: /?go3d_verify=TOKEN) ─────────────
 add_action( 'template_redirect', function () {
     if ( isset( $_GET['go3d_verify'] ) ) {
@@ -115,15 +125,19 @@ add_action( 'template_redirect', function () {
 }, 1 );
 
 // ── Admin settings ────────────────────────────────────────────────────────────
+// Top-level menu item ("widget") in the wp-admin sidebar rather than buried
+// under Settings, so the plugin has its own dedicated home.
 add_action( 'admin_menu', function () {
-    add_options_page(
-        '3D Go Settings',
-        '3D Go',
+    add_menu_page(
+        '3D Go',                 // page title
+        '3D Go',                 // menu label
         'manage_options',
         'go3d-settings',
         function () {
             include GO3D_PLUGIN_DIR . 'templates/admin-settings.php';
-        }
+        },
+        'dashicons-games',       // sidebar icon
+        58                       // position (just below Settings)
     );
 } );
 

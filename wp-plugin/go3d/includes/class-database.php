@@ -3,7 +3,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 class Go3D_Database {
 
-    const DB_VERSION = '1.1';
+    const DB_VERSION = '1.2';
 
     /**
      * Run install() (dbDelta) whenever the stored schema version is behind the
@@ -37,6 +37,7 @@ class Go3D_Database {
             draws         SMALLINT(5)  NOT NULL DEFAULT 0,
             email_verified     TINYINT(1)   NOT NULL DEFAULT 0,
             verification_token VARCHAR(64)          DEFAULT NULL,
+            verification_code  VARCHAR(8)           DEFAULT NULL,
             reset_token        VARCHAR(64)          DEFAULT NULL,
             reset_expires      DATETIME             DEFAULT NULL,
             notify_idle_hours  TINYINT(3)   NOT NULL DEFAULT 24,

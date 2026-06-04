@@ -24,6 +24,12 @@ class Go3D_API_Auth {
             'permission_callback' => '__return_true',
         ] );
 
+        register_rest_route( $ns, '/auth/verify-code', [
+            'methods'             => 'POST',
+            'callback'            => [ __CLASS__, 'verify_code' ],
+            'permission_callback' => '__return_true',
+        ] );
+
         register_rest_route( $ns, '/auth/request-reset', [
             'methods'             => 'POST',
             'callback'            => [ __CLASS__, 'request_reset' ],
@@ -83,6 +89,21 @@ class Go3D_API_Auth {
         $redirect = home_url( '/?go3d_verified=1' );
         wp_redirect( $redirect );
         exit;
+    }
+
+    public static function verify_code( WP_REST_Request $req ): WP_REST_Response {
+        $email = sanitize_email( $req->get_param( 'email' ) ?? '' );
+        $code  =                 $req->get_param( 'code' )  ?? '';
+
+        if ( ! $email || ! $code ) return Go3D_API::error( 'Missing email or code.', 422 );
+
+        $result = Go3D_Auth::verify_email_code( $email, (string) $code );
+        if ( ! $result['ok'] ) return Go3D_API::error( $result['error'], $result['code'] );
+
+        return Go3D_API::ok( [
+            'token' => $result['token'],
+            'user'  => $result['user'],
+        ] );
     }
 
     public static function request_reset( WP_REST_Request $req ): WP_REST_Response {
