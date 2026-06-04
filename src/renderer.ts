@@ -167,6 +167,7 @@ export class Renderer {
 
   // Grid + particles for animation
   private innerGrid!: THREE.LineSegments;
+  private boundingBox!: THREE.LineSegments;
   private particles!: THREE.Points;
 
   // DOM
@@ -287,7 +288,9 @@ export class Renderer {
     for (const [a,b] of ei) bp.push(...c[a], ...c[b]);
     const bGeo = new THREE.BufferGeometry();
     bGeo.setAttribute('position', new THREE.Float32BufferAttribute(bp, 3));
-    this.scene.add(new THREE.LineSegments(bGeo, new THREE.LineBasicMaterial({ color: GRID_O })));
+    this.boundingBox = new THREE.LineSegments(bGeo,
+      new THREE.LineBasicMaterial({ color: GRID_O, transparent: true, opacity: 1 }));
+    this.scene.add(this.boundingBox);
 
     // Floor grid
     const fs = (s - 1) + 10;
@@ -667,12 +670,13 @@ export class Renderer {
               col.setScalar(0.03);   // nearly invisible off the plane
             }
           } else if (this.stackLayer !== null) {
-            // Stack mode: spotlight the active build layer, dim the rest of the
-            // lattice. Already-built layers below stay partly lit for context;
-            // the not-yet-reachable layers above fade back further.
-            if (y === this.stackLayer)      col.copy(dotDefault);
-            else if (y < this.stackLayer)   col.copy(dotDefault).multiplyScalar(0.32);
-            else                            col.copy(dotDefault).multiplyScalar(0.12);
+            // Stack mode: spotlight the active build layer, recede the rest of
+            // the lattice. On-layer points get a bright cyan highlight; built
+            // layers below stay faintly lit for context, unbuilt layers above
+            // fade back furthest.
+            if (y === this.stackLayer)      col.setHex(CYAN);
+            else if (y < this.stackLayer)   col.copy(dotDefault).multiplyScalar(0.22);
+            else                            col.copy(dotDefault).multiplyScalar(0.08);
           } else {
             col.copy(dotDefault);
           }
@@ -694,9 +698,9 @@ export class Renderer {
                         (this.sliceAxis === 'z' && z === this.sliceIndex);
         if (onSlice) col.setHex(0xffcc55); else col.setScalar(0.02);
       } else if (this.stackLayer !== null) {
-        if (y === this.stackLayer)      col.copy(hoshiDefault);
-        else if (y < this.stackLayer)   col.copy(hoshiDefault).multiplyScalar(0.3);
-        else                            col.copy(hoshiDefault).multiplyScalar(0.1);
+        if (y === this.stackLayer)      col.setHex(0xffcc55);
+        else if (y < this.stackLayer)   col.copy(hoshiDefault).multiplyScalar(0.22);
+        else                            col.copy(hoshiDefault).multiplyScalar(0.06);
       } else {
         col.copy(hoshiDefault);
       }
@@ -985,9 +989,13 @@ export class Renderer {
       this.controls.update();
     }
 
-    // Grid pulse
-    (this.innerGrid.material as THREE.LineBasicMaterial).opacity =
-      0.55 + 0.35 * Math.sin(this.hoverPhase * 0.18);
+    // Grid pulse — in stack mode the lattice structure recedes so the active
+    // build layer reads clearly; otherwise it breathes at full strength.
+    const stackFade = this.stackLayer !== null && this.sliceAxis === 'none';
+    (this.innerGrid.material as THREE.LineBasicMaterial).opacity = stackFade
+      ? 0.10 + 0.04 * Math.sin(this.hoverPhase * 0.18)
+      : 0.55 + 0.35 * Math.sin(this.hoverPhase * 0.18);
+    (this.boundingBox.material as THREE.LineBasicMaterial).opacity = stackFade ? 0.22 : 1;
 
     // Particle drift
     this.particles.rotation.y += 0.0002;
