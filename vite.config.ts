@@ -14,7 +14,8 @@ export default defineConfig({
     manifest: true,
     rollupOptions: {
       input: {
-        // Standalone hot-seat game (index.html → main.ts) for GitHub Pages.
+        // Standalone hot-seat game (index.html → standalone.ts) for GitHub
+        // Pages — same local play (all modes + time controls) as the plugin.
         main: resolve(__dirname, 'index.html'),
         // Multiplayer entry loaded by the [go3d] WordPress shortcode.
         app: resolve(__dirname, 'src/app.ts'),

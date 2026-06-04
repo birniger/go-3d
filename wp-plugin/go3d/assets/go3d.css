@@ -31,7 +31,8 @@
 
 #go3d-auth,
 #go3d-lobby,
-#go3d-profile {
+#go3d-profile,
+#go3d-local-setup {
   max-width: 920px;
   margin: 0 auto;
   padding: 1.5rem;

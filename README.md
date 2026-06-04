@@ -4,7 +4,7 @@ Go, played in three dimensions, with a neon cyberpunk aesthetic — bloom post-p
 
 It ships in two forms from one codebase:
 
-- **Standalone** — a single-device hot-seat cube game. Zero backend, runs entirely in the browser. **Play online → [birniger.github.io/go-3d](https://birniger.github.io/go-3d)**
+- **Standalone** — a single-device hot-seat game across **all three board modes** with full time controls. Zero backend, runs entirely in the browser — the same "play locally" experience as the plugin, minus the accounts. **Play online → [birniger.github.io/go-3d](https://birniger.github.io/go-3d)**
 - **WordPress plugin** (`wp-plugin/go3d`) — a full multiplayer build with accounts, ELO ratings, real-time play over Pusher, three board modes, and a built-in local hot-seat mode. Drop the `[go3d]` shortcode on any page.
 
 ---
@@ -101,7 +101,7 @@ npm run build
 ```
 
 `vite build` emits two entries from one bundle:
-- `main` (`index.html` → `src/main.ts`) — the standalone GitHub Pages game.
+- `main` (`index.html` → `src/standalone.ts`) — the standalone GitHub Pages game (all three board modes + full time controls, no backend).
 - `app` (`src/app.ts`) — the multiplayer + local bundle the WordPress shortcode loads.
 
 ### Packaging the plugin
@@ -130,8 +130,10 @@ go-3d/
 │   ├── clock.ts                # Time controls (Simple / Absolute / Fischer / Byo-yomi)
 │   ├── renderer.ts             # Three.js scene for cube/stack — slice mode, picking, FX
 │   ├── sphere-renderer.ts      # Three.js scene for sphere boards
-│   ├── main.ts                 # Standalone (GitHub Pages) hot-seat UI
+│   ├── standalone.ts           # Standalone (GitHub Pages) hot-seat entry — all modes, no backend
 │   ├── app.ts                  # WordPress embed: lobby → game session wiring
+│   ├── game-session.ts         # Shared session shells (GameSession / SphereGameSession)
+│   ├── game-form.ts            # Shared new-game / local-setup form wiring
 │   ├── lobby.ts                # Auth / lobby / new-game / profile screens
 │   ├── auth.ts                 # Client auth state
 │   ├── api.ts                  # REST client + shared types

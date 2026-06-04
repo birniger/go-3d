@@ -1,414 +1,221 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>3D GO — CYBERPUNK EDITION</title>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Go³D — 3D Go, cyberpunk edition</title>
+  <meta name="description" content="Go played in three dimensions — cube, stack, and geodesic-sphere boards. Two players, one screen. Neon cyberpunk aesthetic, built with Three.js.">
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
+    /* Full-page chrome for the standalone build (the plugin lives inside a WP
+       page; here we own the whole document). All component styling comes from
+       go3d.css, scoped under #go3d-root. */
+    html, body { margin: 0; height: 100%; }
     body {
-      background: #020408;
-      font-family: 'Share Tech Mono', monospace;
+      background: #05060a;
+      color: #cdd6e4;
+      font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    }
+    #go3d-root { min-height: 100vh; }
+    .go3d-standalone-header {
+      text-align: center;
+      padding: 1.75rem 1rem 0.5rem;
+    }
+    .go3d-standalone-header .go3d-logo {
+      font-size: 1.9rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
       color: #00e5ff;
-      overflow: hidden;
+      text-shadow: 0 0 18px rgba(0, 229, 255, 0.45);
     }
-
-    canvas { display: block; }
-
-    /* ── Scanlines / vignette ────────────────────────────────────── */
-    #scanlines {
-      position: fixed; inset: 0; pointer-events: none; z-index: 10;
-      background: repeating-linear-gradient(
-        0deg, transparent, transparent 2px,
-        rgba(0,0,0,0.06) 2px, rgba(0,0,0,0.06) 4px
-      );
-    }
-    #vignette {
-      position: fixed; inset: 0; pointer-events: none; z-index: 9;
-      background: radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.55) 100%);
-    }
-
-    /* ── Side panel ──────────────────────────────────────────────── */
-    #ui {
-      position: fixed; top: 24px; left: 24px;
-      width: 220px; z-index: 20;
-      overflow-y: auto; max-height: calc(100vh - 48px);
-      scrollbar-width: thin;
-      scrollbar-color: rgba(0,229,255,0.15) transparent;
-    }
-    #ui::-webkit-scrollbar { width: 3px; }
-    #ui::-webkit-scrollbar-track { background: transparent; }
-    #ui::-webkit-scrollbar-thumb { background: rgba(0,229,255,0.2); border-radius: 2px; }
-
-    #title {
-      font-family: 'Orbitron', monospace;
-      font-weight: 900; font-size: 20px;
-      letter-spacing: 4px; color: #00e5ff;
-      text-shadow: 0 0 12px #00e5ff, 0 0 24px #0077aa;
-      margin-bottom: 20px;
-      animation: glitch 8s infinite;
-    }
-
-    @keyframes glitch {
-      0%,88%,100% { text-shadow: 0 0 12px #00e5ff, 0 0 24px #0077aa; transform: translate(0); }
-      90% { transform: translate(-2px, 1px); text-shadow: 2px 0 0 #ff0077, -2px 0 0 #00e5ff; }
-      92% { transform: translate(2px, -1px); }
-      94% { transform: translate(0); }
-    }
-
-    #turn-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-    #stone-dot {
-      width: 14px; height: 14px; border-radius: 50%;
-      box-shadow: 0 0 8px currentColor; flex-shrink: 0;
-    }
-    #turn-label { font-family: 'Orbitron', monospace; font-size: 11px; letter-spacing: 1px; }
-    #capture-line {
-      font-size: 11px; color: rgba(0,229,255,0.5);
-      margin-bottom: 4px; letter-spacing: 1px;
-    }
-    #coord-tip {
-      font-size: 11px; color: rgba(0,229,255,0.5);
-      letter-spacing: 2px; min-height: 14px; margin-bottom: 10px;
-    }
-
-    /* ── Clock display ───────────────────────────────────────────── */
-    #clock-display {
-      margin-bottom: 12px;
-      padding: 8px 0;
-      border-top: 1px solid rgba(0,229,255,0.1);
-      border-bottom: 1px solid rgba(0,229,255,0.1);
-    }
-    .clock-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
-    .clock-row:not(.clock-active) { opacity: 0.4; }
-    .clock-player { font-size: 10px; letter-spacing: 1px; width: 20px; }
-    .clock-time {
-      font-family: 'Orbitron', monospace; font-size: 15px; font-weight: 700;
-      letter-spacing: 2px; flex: 1; text-align: right;
-    }
-    .clock-byo { font-size: 10px; color: rgba(0,229,255,0.45); min-width: 22px; text-align: right; }
-    #p1-clock-row .clock-time { color: #0099ff; }
-    #p2-clock-row .clock-time { color: #ff0077; }
-    #p1-clock-row.clock-active .clock-time {
-      color: #00e5ff; text-shadow: 0 0 10px #00e5ff;
-      animation: clockTick 1s ease-in-out infinite;
-    }
-    #p2-clock-row.clock-active .clock-time {
-      color: #ff0077; text-shadow: 0 0 10px #ff0077;
-      animation: clockTick 1s ease-in-out infinite;
-    }
-    @keyframes clockTick { 0%,100% { opacity: 1; } 50% { opacity: 0.65; } }
-
-    /* ── Form controls ───────────────────────────────────────────── */
-    select, .btn, input[type=number] {
-      display: block; width: 100%; margin-bottom: 8px;
-      padding: 8px 10px;
-      background: rgba(0,229,255,0.05);
-      color: #00e5ff;
-      border: 1px solid rgba(0,229,255,0.25); border-radius: 3px;
-      cursor: pointer;
-      font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: 1px;
-      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-    }
-    select:hover, .btn:hover, input[type=number]:hover {
-      background: rgba(0,229,255,0.12); border-color: rgba(0,229,255,0.55);
-      box-shadow: 0 0 8px rgba(0,229,255,0.2);
-    }
-    input[type=number]:focus {
-      outline: none; border-color: #00e5ff;
-      box-shadow: 0 0 10px rgba(0,229,255,0.3);
-    }
-    input[type=number] { cursor: text; -moz-appearance: textfield; }
-    input[type=number]::-webkit-inner-spin-button,
-    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
-    select option { background: #020408; }
-
-    #custom-row { display: none; position: relative; margin-bottom: 8px; }
-    #custom-row input { margin-bottom: 0; padding-right: 36px; }
-    #custom-unit {
-      position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-      font-size: 11px; color: rgba(0,229,255,0.45); pointer-events: none;
-    }
-
-    #score-btn {
-      color: #ff0077; border-color: rgba(255,0,119,0.3); background: rgba(255,0,119,0.05);
-    }
-    #score-btn:hover {
-      background: rgba(255,0,119,0.12); border-color: rgba(255,0,119,0.6);
-      box-shadow: 0 0 8px rgba(255,0,119,0.2);
-    }
-
-    /* ── Score panel ─────────────────────────────────────────────── */
-    #score-panel {
-      display: none; margin-top: 14px; padding: 12px 10px;
-      border: 1px solid rgba(0,229,255,0.2); border-radius: 3px;
-      background: rgba(0,10,20,0.85); font-size: 11px; line-height: 2;
-    }
-    #score-panel .label { color: rgba(0,229,255,0.55); letter-spacing: 1px; font-size: 10px; }
-    .p1score { color: #00e5ff; }
-    .p2score { color: #ff0077; }
-    #winner-line {
-      margin-top: 8px; font-family: 'Orbitron', monospace; font-size: 11px;
-      border-top: 1px solid rgba(0,229,255,0.15); padding-top: 8px; letter-spacing: 1px;
-    }
-
-    /* ── Clock settings ──────────────────────────────────────────── */
-    #clock-settings {
-      margin-top: 14px; padding-top: 12px;
-      border-top: 1px solid rgba(0,229,255,0.1);
-    }
-    .sect-label {
-      font-size: 9px; letter-spacing: 2px; color: rgba(0,229,255,0.4); margin-bottom: 6px;
-    }
-    .field-label {
-      font-size: 9px; letter-spacing: 1px; color: rgba(0,229,255,0.4); margin-bottom: 2px;
-    }
-    .clock-fields-row { display: flex; gap: 6px; }
-    .clock-fields-row input { flex: 1; }
-
-    /* ── History panel (right side) ──────────────────────────────── */
-    #history-panel {
-      display: none;
-      position: fixed; top: 24px; right: 24px;
-      width: 155px; max-height: calc(100vh - 120px);
-      background: rgba(2,4,8,0.92);
-      border: 1px solid rgba(0,229,255,0.18); border-radius: 3px;
-      padding: 10px; overflow-y: auto; z-index: 20;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(0,229,255,0.15) transparent;
-    }
-    #history-panel::-webkit-scrollbar { width: 3px; }
-    #history-panel::-webkit-scrollbar-thumb { background: rgba(0,229,255,0.2); border-radius: 2px; }
-    #history-panel .label {
-      font-size: 9px; letter-spacing: 2px; color: rgba(0,229,255,0.4); margin-bottom: 6px;
-    }
-    .move-entry {
-      font-size: 10px; line-height: 1.85; padding: 1px 5px; cursor: pointer;
-      border-radius: 2px; transition: background 0.1s;
-    }
-    .move-entry:hover { background: rgba(0,229,255,0.08); }
-    .move-entry.active { background: rgba(0,229,255,0.14); color: #00e5ff !important; }
-    .move-p1 { color: rgba(0,153,255,0.75); }
-    .move-p2 { color: rgba(255,0,119,0.75); }
-
-    /* ── Replay bar (bottom) ─────────────────────────────────────── */
-    #replay-bar {
-      display: none;
-      position: fixed; bottom: 0; left: 0; right: 0; height: 50px;
-      background: rgba(2,4,8,0.97);
-      border-top: 1px solid rgba(0,229,255,0.2);
-      z-index: 25; align-items: center; justify-content: center; gap: 14px;
-    }
-    #replay-step { color: rgba(0,229,255,0.6); font-size: 11px; letter-spacing: 1px; min-width: 80px; text-align: center; }
-    .replay-btn {
-      padding: 6px 14px;
-      background: rgba(0,229,255,0.06); border: 1px solid rgba(0,229,255,0.25);
-      border-radius: 3px; cursor: pointer; color: #00e5ff;
-      font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: 1px;
-      transition: background 0.15s;
-    }
-    .replay-btn:hover { background: rgba(0,229,255,0.15); }
-
-    /* ── Coord jump overlay ──────────────────────────────────────── */
-    #coord-jump {
-      display: none;
-      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-      background: rgba(2,4,8,0.95); border: 1px solid rgba(0,229,255,0.4);
-      border-radius: 3px; padding: 8px 16px; z-index: 30;
-      align-items: center; gap: 8px;
-    }
-    #coord-jump .cj-label { color: rgba(0,229,255,0.5); font-size: 11px; letter-spacing: 2px; }
-    #coord-jump-input {
-      background: transparent; border: none; outline: none; caret-color: #00e5ff;
-      color: #00e5ff; font-family: 'Share Tech Mono', monospace;
-      font-size: 14px; letter-spacing: 3px; width: 64px; text-transform: uppercase;
-    }
-
-    /* ── Hints ───────────────────────────────────────────────────── */
-    #hint {
-      position: fixed; bottom: 24px; right: 24px;
-      color: rgba(0,229,255,0.3); font-size: 10px;
-      text-align: right; line-height: 2; letter-spacing: 1px; z-index: 20;
-      pointer-events: none;
-    }
-
-    /* ── Game over overlay ───────────────────────────────────────── */
-    #message {
-      display: none;
-      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
-      background: rgba(2,4,8,0.97);
-      border: 1px solid rgba(0,229,255,0.35);
-      box-shadow: 0 0 40px rgba(0,229,255,0.15), inset 0 0 20px rgba(0,0,0,0.5);
-      border-radius: 4px; padding: 36px 44px; text-align: center; z-index: 30; min-width: 320px;
-    }
-    #msg-title {
-      font-family: 'Orbitron', monospace; font-size: 22px; font-weight: 900;
-      letter-spacing: 4px; margin-bottom: 16px; text-shadow: 0 0 20px #00e5ff;
-    }
-    #msg-body {
-      font-size: 13px; color: rgba(0,229,255,0.7); line-height: 2;
-      margin-bottom: 16px; white-space: pre-line;
-    }
-    #msg-review-btn { margin: 0 0 10px; }
-    #msg-new-btn { margin: 0 auto; display: inline-block; width: auto; padding: 10px 24px; }
-
-    /* ── Game-over backdrop (blocks canvas clicks) ───────────────── */
-    #msg-backdrop {
-      display: none; position: fixed; inset: 0;
-      background: rgba(0,0,0,0.5); z-index: 29; pointer-events: auto;
-    }
-
-    /* ── Scoring settings ────────────────────────────────────────── */
-    #scoring-settings {
-      margin-top: 14px; padding-top: 12px;
-      border-top: 1px solid rgba(0,229,255,0.1);
+    .go3d-standalone-header p {
+      margin: 0.35rem 0 0;
+      color: #6b7689;
+      font-size: 0.85rem;
     }
   </style>
 </head>
 <body>
-  <div id="scanlines"></div>
-  <div id="vignette"></div>
+<div id="go3d-root">
 
-  <!-- ── Side panel ─────────────────────────────────────────────── -->
-  <div id="ui">
-    <div id="title">3D·GO</div>
-
-    <div id="turn-row">
-      <div id="stone-dot"></div>
-      <div id="turn-label">Player 1</div>
+  <!-- ── Local game setup (the home screen) ─────────────────────── -->
+  <div id="go3d-local-setup" class="go3d-screen">
+    <div class="go3d-standalone-header">
+      <span class="go3d-logo">Go³D</span>
+      <p>3D Go · cube · stack · sphere — two players, one screen</p>
     </div>
-    <div id="capture-line">CAPTURES  P1:0  P2:0</div>
-    <div id="coord-tip"></div>
+    <section class="go3d-panel go3d-local-setup-panel">
+      <h2>New game</h2>
+      <p class="go3d-form-hint">Two players take turns on this device. Black moves first.</p>
+      <form id="go3d-ls-form" class="go3d-form">
+        <div class="go3d-form-row">
+          <label>Mode
+            <select name="mode" id="go3d-ls-mode-select">
+              <option value="cube" selected>Cube</option>
+              <option value="stack">Stack</option>
+              <option value="sphere">Sphere</option>
+            </select>
+          </label>
+          <label id="go3d-ls-cube-size-wrap">Board size
+            <select id="go3d-ls-cube-size">
+              <option value="9" selected>9×9×9</option>
+              <option value="5">5×5×5</option>
+              <option value="13">13×13×13</option>
+              <option value="19">19×19×19</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <input type="number" id="go3d-ls-cube-custom" value="9" min="2" max="19" step="1" style="width:4em;display:none;" title="Cube edge length (2–19)">
+          </label>
+          <label id="go3d-ls-sphere-size-wrap" style="display:none;">Sphere size
+            <select id="go3d-ls-sphere-size">
+              <option value="2">Small (42 points)</option>
+              <option value="3" selected>Medium (92 points)</option>
+              <option value="4">Large (162 points)</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <input type="number" id="go3d-ls-sphere-freq" value="5" min="2" max="8" step="1" style="width:4em;display:none;" title="Geodesic frequency (2–8)">
+          </label>
+          <label>Scoring
+            <select name="scoring_mode">
+              <option value="chinese" selected>Chinese</option>
+              <option value="japanese">Japanese</option>
+            </select>
+          </label>
+          <label>Komi
+            <input type="number" name="komi" value="6.5" step="0.5" min="0" max="20" style="width:5em;">
+          </label>
+        </div>
+        <div class="go3d-form-row">
+          <label>Time control
+            <select name="time_control" id="go3d-ls-time-control-select">
+              <option value="none" selected>None</option>
+              <option value="absolute">Absolute</option>
+              <option value="byoyomi">Byōyomi</option>
+              <option value="fischer">Fischer</option>
+            </select>
+          </label>
+          <div id="go3d-ls-time-settings" style="display:none;">
+            <label>Main time (s)<input type="number" name="main_time_s" value="600" min="30" step="30"></label>
+            <span id="go3d-ls-byoyomi-extra" style="display:none;">
+              <label>Periods<input type="number" name="byoyomi_periods" value="5" min="1"></label>
+              <label>Period (s)<input type="number" name="byoyomi_time_s" value="30" min="5"></label>
+            </span>
+            <span id="go3d-ls-fischer-extra" style="display:none;">
+              <label>Increment (s)<input type="number" name="fischer_increment_s" value="10" min="1"></label>
+            </span>
+          </div>
+        </div>
+        <div class="go3d-form-actions">
+          <button type="submit" id="go3d-ls-start-btn" class="go3d-btn-primary">Start game</button>
+        </div>
+      </form>
+    </section>
+  </div><!-- #go3d-local-setup -->
 
-    <!-- Clock display (shown when clock is active) -->
-    <div id="clock-display" style="display:none">
-      <div id="p1-clock-row" class="clock-row">
-        <span class="clock-player">P1</span>
-        <span id="p1-time" class="clock-time">0:00</span>
-        <span id="p1-byo"  class="clock-byo"></span>
-      </div>
-      <div id="p2-clock-row" class="clock-row">
-        <span class="clock-player">P2</span>
-        <span id="p2-time" class="clock-time">0:00</span>
-        <span id="p2-byo"  class="clock-byo"></span>
-      </div>
-    </div>
+  <!-- ── In-game ────────────────────────────────────────────────── -->
+  <div id="go3d-game-screen" class="go3d-screen" style="display:none;">
 
-    <select id="size-select">
-      <option value="5">5×5×5  — TRAINING</option>
-      <option value="9" selected>9×9×9  — STANDARD</option>
-      <option value="13">13×13×13 — PRO</option>
-      <option value="19">19×19×19 — MASTER</option>
-      <option value="custom">CUSTOM…</option>
-    </select>
+    <!-- Top bar: back button · player names & turn indicator · clocks -->
+    <div id="go3d-game-topbar">
 
-    <div id="custom-row">
-      <input id="custom-size" type="number" min="2" max="19" value="7" placeholder="2 – 19" />
-      <span id="custom-unit">³</span>
-    </div>
+      <button id="go3d-back-to-lobby-game" class="go3d-btn-ghost">← New game</button>
 
-    <button class="btn" id="pass-btn">[ PASS ]</button>
-    <button class="btn" id="undo-btn">[ UNDO ]</button>
-    <button class="btn" id="new-btn">[ NEW GAME ]</button>
-    <button class="btn" id="score-btn">[ SCAN TERRITORY ]</button>
+      <div id="go3d-player-info">
+        <!-- Player 1 (Black) -->
+        <div class="go3d-player-badge go3d-p1" id="go3d-p1-info">
+          <span class="go3d-stone-dot go3d-stone-black">●</span>
+          <span id="go3d-p1-name">—</span>
+          <span id="go3d-p1-elo" class="go3d-elo-badge"></span>
+          <span id="go3d-p1-caps" class="go3d-cap-count" title="Stones captured"></span>
+        </div>
 
-    <div id="score-panel">
-      <div class="label" id="score-panel-label">TERRITORY SCAN</div>
-      <div class="p1score" id="p1-score-line">P1 ──</div>
-      <div class="p2score" id="p2-score-line">P2 ──</div>
-      <div id="winner-line"></div>
-    </div>
+        <span id="go3d-turn-indicator" class="go3d-turn-label" aria-live="polite"></span>
 
-    <!-- Scoring settings -->
-    <div id="scoring-settings">
-      <div class="sect-label">SCORING RULES</div>
-      <select id="scoring-mode-select">
-        <option value="chinese">CHINESE · area scoring</option>
-        <option value="japanese">JAPANESE · territory</option>
-      </select>
-      <div class="field-label">KOMI (white bonus)</div>
-      <input type="number" id="komi-input" value="6.5" min="0" max="20" step="0.5">
-    </div>
-
-    <!-- Clock settings -->
-    <div id="clock-settings">
-      <div class="sect-label">TIME CONTROLS</div>
-      <select id="clock-mode-select">
-        <option value="none">NO CLOCK</option>
-        <option value="simple">SIMPLE · per move</option>
-        <option value="fischer">FISCHER · bank+inc</option>
-        <option value="byoyomi">BYO-YOMI</option>
-      </select>
-      <div id="clock-fields-simple" style="display:none">
-        <div class="field-label">SECONDS / MOVE</div>
-        <input type="number" id="clock-simple-time" value="30" min="5" max="300">
-      </div>
-      <div id="clock-fields-main" style="display:none">
-        <div class="field-label">MAIN TIME (MIN)</div>
-        <input type="number" id="clock-main-time" value="10" min="1" max="60">
-      </div>
-      <div id="clock-fields-fischer" style="display:none">
-        <div class="field-label">INCREMENT (SEC/MOVE)</div>
-        <input type="number" id="clock-increment" value="10" min="0" max="60">
-      </div>
-      <div id="clock-fields-byoyomi" style="display:none">
-        <div class="field-label">PERIOD SEC × COUNT</div>
-        <div class="clock-fields-row">
-          <input type="number" id="clock-byo-time"    value="30" min="5" max="120">
-          <input type="number" id="clock-byo-periods" value="3"  min="1" max="9">
+        <!-- Player 2 (White) -->
+        <div class="go3d-player-badge go3d-p2" id="go3d-p2-info">
+          <span class="go3d-stone-dot go3d-stone-white">○</span>
+          <span id="go3d-p2-name">—</span>
+          <span id="go3d-p2-elo" class="go3d-elo-badge"></span>
+          <span id="go3d-p2-caps" class="go3d-cap-count" title="Stones captured"></span>
         </div>
       </div>
+
+      <div id="go3d-clock-bar" style="display:none;">
+        <div class="go3d-clock-cell">
+          <span class="go3d-clock-label">Black</span>
+          <span id="go3d-p1-clock" class="go3d-clock">—</span>
+        </div>
+        <div class="go3d-clock-cell">
+          <span class="go3d-clock-label">White</span>
+          <span id="go3d-p2-clock" class="go3d-clock">—</span>
+        </div>
+      </div>
+
+    </div><!-- #go3d-game-topbar -->
+
+    <!-- Stack mode: which build layer is active -->
+    <div id="go3d-layer-banner" style="display:none;" aria-live="polite"></div>
+
+    <!-- Canvas injected here by the JS bundle -->
+    <div id="go3d-canvas-wrap"></div>
+
+    <!-- View controls — slice / camera / score -->
+    <div id="go3d-view-controls">
+      <div class="go3d-vc-group" id="go3d-slice-group">
+        <span class="go3d-vc-label">Slice</span>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-x" title="Slice along X (key: X)">X</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-y" title="Slice along Y (key: Y)">Y</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-z" title="Slice along Z (key: Z)">Z</button>
+      </div>
+      <div class="go3d-vc-group" id="go3d-camera-group">
+        <span class="go3d-vc-label">View</span>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-cam-top"   title="Top view">Top</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-cam-front" title="Front view">Front</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-cam-side"  title="Side view">Side</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-cam-iso"   title="Isometric view">Iso</button>
+      </div>
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-score-btn" title="Estimate territory">Score</button>
     </div>
-  </div>
 
-  <!-- ── History panel (right) ───────────────────────────────────── -->
-  <div id="history-panel">
-    <div class="label">MOVE LOG</div>
-    <div id="move-list"></div>
-  </div>
+    <!-- In-game action buttons (pass / resign) -->
+    <div id="go3d-game-actions">
+      <button id="go3d-pass-btn"   class="go3d-btn-ghost">Pass</button>
+      <button id="go3d-resign-btn" class="go3d-btn-ghost go3d-btn-danger">Resign</button>
+    </div>
 
-  <!-- ── Hints (bottom-right) ────────────────────────────────────── -->
-  <div id="hint">
-    DRAG · ROTATE &nbsp; SCROLL · ZOOM<br>
-    CLICK · PLACE &nbsp; ENTER · CONFIRM<br>
-    ←→↑↓ · MOVE CURSOR &nbsp; E/Q · LAYER UP/DOWN<br>
-    X · X-SLICE &nbsp; Y · Y-SLICE &nbsp; Z · Z-SLICE<br>
-    ←→ · SCROLL X &nbsp; E/Q · SCROLL Y &nbsp; ↑↓ · SCROLL Z<br>
-    ESC · EXIT SLICE &nbsp; / · JUMP TO COORD<br>
-    1–4 · CAMERA &nbsp; P · PASS &nbsp; U · UNDO &nbsp; T · TERRITORY
-  </div>
+    <!-- Replay controls — shown only after a finished game -->
+    <div id="go3d-replay-bar" style="display:none;">
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-replay-first" title="First move">⏮</button>
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-replay-prev"  title="Previous move">◀</button>
+      <span id="go3d-replay-status">—</span>
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-replay-next"  title="Next move">▶</button>
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-replay-last"  title="Last move">⏭</button>
+    </div>
 
-  <!-- ── Replay bar (bottom) ─────────────────────────────────────── -->
-  <div id="replay-bar">
-    <button class="replay-btn" id="replay-prev">◀ PREV</button>
-    <span id="replay-step">0 / 0</span>
-    <button class="replay-btn" id="replay-next">NEXT ▶</button>
-    <button class="replay-btn" id="replay-exit">[ LIVE ]</button>
-  </div>
+    <!-- Waiting overlay — unused locally, kept for session parity -->
+    <div id="go3d-waiting-overlay" style="display:none;" aria-live="polite"></div>
 
-  <!-- ── Coord jump overlay ───────────────────────────────────────── -->
-  <div id="coord-jump">
-    <span class="cj-label">JUMP ▸</span>
-    <input id="coord-jump-input" type="text" maxlength="4" placeholder="E5c" autocomplete="off" spellcheck="false" />
-  </div>
+    <!-- First-run onboarding overlay (dismissed; remembered in localStorage) -->
+    <div id="go3d-onboarding" style="display:none;">
+      <div class="go3d-onboarding-card">
+        <h3>Welcome to Go³D</h3>
+        <ul>
+          <li><strong>Place a stone:</strong> click an empty point on the board.</li>
+          <li><strong>See inside (cube/stack):</strong> press <kbd>X</kbd>/<kbd>Y</kbd>/<kbd>Z</kbd> or the <em>Slice</em> buttons, then arrow keys to move the slice.</li>
+          <li><strong>Keyboard cursor:</strong> arrow keys move a cursor; <kbd>Enter</kbd> places. <kbd>Q</kbd>/<kbd>E</kbd> move on the vertical axis.</li>
+          <li><strong>Snap the camera:</strong> use the <em>View</em> buttons (Top / Front / Side / Iso).</li>
+          <li><strong>Score:</strong> the <em>Score</em> button shades estimated territory.</li>
+        </ul>
+        <button class="go3d-btn-primary" id="go3d-onboarding-dismiss">Got it</button>
+      </div>
+    </div>
 
-  <!-- ── Game-over backdrop ─────────────────────────────────────── -->
-  <div id="msg-backdrop"></div>
+  </div><!-- #go3d-game-screen -->
 
-  <!-- ── Game over modal ─────────────────────────────────────────── -->
-  <div id="message">
-    <div id="msg-title">GAME OVER</div>
-    <div id="msg-body"></div>
-    <button class="btn" id="msg-review-btn" onclick="document.getElementById('message').style.display='none'; enterReviewFromModal()">[ REVIEW GAME ]</button>
-    <button class="btn" id="msg-new-btn">[ NEW GAME ]</button>
-  </div>
+  <!-- ── Global status message ─────────────────────────────────── -->
+  <div id="go3d-toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="/src/main.ts"></script>
-  <script>
-    // Expose enterReview for the inline onclick (resolved after module loads)
-    function enterReviewFromModal() {
-      window.__enterReplay && window.__enterReplay(0);
-    }
-  </script>
+</div><!-- #go3d-root -->
+
+<script type="module" src="/src/standalone.ts"></script>
 </body>
 </html>
