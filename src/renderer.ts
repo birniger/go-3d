@@ -104,6 +104,10 @@ export class Renderer {
   private whiteTerritory!: THREE.InstancedMesh;
 
   private stoneGeo!:      THREE.SphereGeometry;
+  private blackGeo!:      THREE.SphereGeometry;
+  private whiteGeo!:      THREE.SphereGeometry;
+  private blackAlpha!:    THREE.InstancedBufferAttribute;
+  private whiteAlpha!:    THREE.InstancedBufferAttribute;
   private blackMat!:      THREE.MeshPhysicalMaterial;
   private whiteMat!:      THREE.MeshPhysicalMaterial;
   private blackHoverMat!: THREE.MeshPhysicalMaterial;
@@ -427,23 +431,67 @@ export class Renderer {
       color: 0x200010, emissive: PINK, emissiveIntensity: 0.9,
       roughness: 0.08, metalness: 0.0, clearcoat: 1.0, clearcoatRoughness: 0.05,
     });
+    // Hover/capture materials are clones taken BEFORE we patch blackMat/whiteMat
+    // for per-instance alpha, so they keep their own simple opacity behaviour.
     this.blackHoverMat = this.blackMat.clone();
     this.blackHoverMat.transparent = true; this.blackHoverMat.opacity = 0.5;
     this.whiteHoverMat = this.whiteMat.clone();
     this.whiteHoverMat.transparent = true; this.whiteHoverMat.opacity = 0.5;
+    this.captureMat1 = this.blackMat.clone(); this.captureMat1.transparent = true;
+    this.captureMat2 = this.whiteMat.clone(); this.captureMat2.transparent = true;
 
-    this.blackStones = new THREE.InstancedMesh(this.stoneGeo, this.blackMat, cap);
+    // Per-instance alpha so front-of-slice stones can fade and reveal the
+    // interior. Each colour gets its own geometry carrying an instanceAlpha
+    // attribute, and its material is patched to read that attribute.
+    this.blackGeo = this.stoneGeo.clone();
+    this.whiteGeo = this.stoneGeo.clone();
+    const bAlpha = new Float32Array(cap).fill(1);
+    const wAlpha = new Float32Array(cap).fill(1);
+    this.blackAlpha = new THREE.InstancedBufferAttribute(bAlpha, 1);
+    this.whiteAlpha = new THREE.InstancedBufferAttribute(wAlpha, 1);
+    this.blackAlpha.setUsage(THREE.DynamicDrawUsage);
+    this.whiteAlpha.setUsage(THREE.DynamicDrawUsage);
+    this.blackGeo.setAttribute('instanceAlpha', this.blackAlpha);
+    this.whiteGeo.setAttribute('instanceAlpha', this.whiteAlpha);
+
+    this._patchAlpha(this.blackMat);
+    this._patchAlpha(this.whiteMat);
+
+    this.blackStones = new THREE.InstancedMesh(this.blackGeo, this.blackMat, cap);
     this.blackStones.count = 0;
-    this.whiteStones = new THREE.InstancedMesh(this.stoneGeo, this.whiteMat, cap);
+    this.whiteStones = new THREE.InstancedMesh(this.whiteGeo, this.whiteMat, cap);
     this.whiteStones.count = 0;
     this.scene.add(this.blackStones, this.whiteStones);
 
     this.hoverMesh = new THREE.Mesh(this.stoneGeo, this.blackHoverMat);
     this.hoverMesh.visible = false;
     this.scene.add(this.hoverMesh);
+  }
 
-    this.captureMat1 = this.blackMat.clone(); this.captureMat1.transparent = true;
-    this.captureMat2 = this.whiteMat.clone(); this.captureMat2.transparent = true;
+  /** Patch a material so it multiplies fragment alpha by a per-instance value. */
+  private _patchAlpha(mat: THREE.MeshPhysicalMaterial) {
+    mat.transparent = true;
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          '#include <common>\nattribute float instanceAlpha;\nvarying float vInstanceAlpha;'
+        )
+        .replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\nvInstanceAlpha = instanceAlpha;'
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          '#include <common>\nvarying float vInstanceAlpha;'
+        )
+        .replace(
+          '#include <dithering_fragment>',
+          'gl_FragColor.a *= vInstanceAlpha;\n#include <dithering_fragment>'
+        );
+    };
+    mat.needsUpdate = true;
   }
 
   private _getCaptureMesh(player: Player): THREE.Mesh {
@@ -540,25 +588,41 @@ export class Renderer {
     const cam = this.camera.position;
     const maxD = this.game.size * 3.5;
     const col = new THREE.Color();
+    // Camera-side test for slice fading: a stone is "in front" of the slice
+    // plane when it sits on the same side as the camera along the slice axis.
+    const slicePlane = this.sliceAxis !== 'none' ? this.coord(this.sliceIndex) : 0;
+    const camAlong = this.sliceAxis === 'x' ? cam.x
+                   : this.sliceAxis === 'y' ? cam.y
+                   : this.sliceAxis === 'z' ? cam.z : 0;
     let bi = 0, wi = 0;
     for (const { x, y, z, player } of this.stoneEntries) {
       const wx = this.coord(x), wy = this.coord(y), wz = this.coord(z);
       const dx = wx - cam.x, dy = wy - cam.y, dz = wz - cam.z;
       let brightness = 0.45 + 0.55 * Math.max(0, 1 - Math.sqrt(dx*dx+dy*dy+dz*dz) / maxD);
+      let alpha = 1.0;
       if (this.sliceAxis !== 'none') {
         const onSlice = (this.sliceAxis === 'x' && x === this.sliceIndex) ||
                         (this.sliceAxis === 'y' && y === this.sliceIndex) ||
                         (this.sliceAxis === 'z' && z === this.sliceIndex);
-        if (!onSlice) brightness *= 0.10;
+        if (!onSlice) {
+          brightness *= 0.10;
+          // Fade stones between the camera and the slice plane so the
+          // interior is visible; keep stones behind the slice opaque.
+          const along = this.sliceAxis === 'x' ? wx : this.sliceAxis === 'y' ? wy : wz;
+          const inFront = (along - slicePlane) * (camAlong - slicePlane) > 0;
+          if (inFront) alpha = 0.08;
+        }
       } else if (this.cursorActive && y !== this.cursorPos.y) {
         brightness *= 0.4;
       }
       col.setScalar(brightness);
-      if (player === 1) this.blackStones.setColorAt(bi++, col);
-      else              this.whiteStones.setColorAt(wi++, col);
+      if (player === 1) { this.blackStones.setColorAt(bi, col); this.blackAlpha.setX(bi, alpha); bi++; }
+      else              { this.whiteStones.setColorAt(wi, col); this.whiteAlpha.setX(wi, alpha); wi++; }
     }
     if (this.blackStones.instanceColor) this.blackStones.instanceColor.needsUpdate = true;
     if (this.whiteStones.instanceColor) this.whiteStones.instanceColor.needsUpdate = true;
+    this.blackAlpha.needsUpdate = true;
+    this.whiteAlpha.needsUpdate = true;
   }
 
   // Per-dot colour: bright on active slice, near-invisible everywhere else
@@ -739,9 +803,15 @@ export class Renderer {
     const color = axis === 'y' ? PINK : axis === 'z' ? 0x00ffaa : CYAN;
     (this.slicePanel.material  as THREE.MeshBasicMaterial).color.setHex(color);
     (this.sliceBorder.material as THREE.LineBasicMaterial).color.setHex(color);
+    // When slicing, faded front stones must not write depth or they'd occlude
+    // the interior they're meant to reveal.
+    const sliceActive = axis !== 'none';
+    this.blackMat.depthWrite = !sliceActive;
+    this.whiteMat.depthWrite = !sliceActive;
     // Dot/hoshi visibility depends on slice — mark dirty
     this._dotsDirty  = true;
     this._hoshiDirty = true;
+    this._updateStoneColors();
   }
 
   // ── Camera control ────────────────────────────────────────────────────────
