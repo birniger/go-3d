@@ -362,7 +362,7 @@ class Go3D_Game {
             'history_hashes'     => wp_json_encode( $meta['history_hashes'] ),
             'p1_time_ms'         => $p1_time_ms,
             'p2_time_ms'         => $p2_time_ms,
-            'last_move_at'       => $meta['last_move_at'],
+            'last_move_at'       => current_time( 'mysql', true ),
         ], [ 'id' => $game_id ] );
 
         delete_transient( self::undo_transient_key( $game_id ) );

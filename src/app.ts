@@ -77,16 +77,16 @@ class App {
     }
   }
 
-  private async enterGame(gameId: number): Promise<void> {
+  private async enterGame(gameId: number, preloaded?: Awaited<ReturnType<typeof Games.get>>): Promise<void> {
     // Switch to the game screen immediately so the canvas has somewhere to live.
     document.querySelectorAll<HTMLElement>('.go3d-screen').forEach(el => {
       el.style.display = el.id === 'go3d-game-screen' ? '' : 'none';
     });
     if (this.session) { this.session.dispose(); this.session = null; }
     try {
-      const state = await Games.get(gameId);
+      const state = preloaded ?? await Games.get(gameId);
       const onExit = () => { this.session = null; void this.lobby.showLobby(); };
-      const onReload = () => { void this.enterGame(gameId); };
+      const onReload = (next?: typeof state) => { void this.enterGame(gameId, next); };
       this.session = state.mode === 'sphere'
         ? new SphereGameSession(state, onExit, undefined, onReload)
         : new GameSession(state, onExit, undefined, onReload);

@@ -76,6 +76,14 @@ export class GameClock {
     return [{ ...this.states[0] }, { ...this.states[1] }];
   }
 
+  setState(p1: Partial<PlayerClockState>, p2: Partial<PlayerClockState>): void {
+    this.states = [
+      { ...this.states[0], ...p1 },
+      { ...this.states[1], ...p2 },
+    ];
+    this.onTick(this.states[0], this.states[1]);
+  }
+
   destroy(): void {
     this._stopInterval();
   }

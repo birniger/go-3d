@@ -217,7 +217,7 @@ class Go3D_API_Games {
             "SELECT $select, u.username AS challenger_name, u.elo AS challenger_elo
              FROM $c ch JOIN $u u ON u.id = ch.challenger_id
              WHERE ch.challenged_id = %d AND ch.status = 'pending' AND ch.expires_at > UTC_TIMESTAMP()
-             ORDER BY ch.created_at DESC",
+             ORDER BY ch.created_at DESC LIMIT 50",
             $user_id
         ), ARRAY_A ) ?: [];
 
@@ -225,7 +225,7 @@ class Go3D_API_Games {
             "SELECT $select, u.username AS challenged_name, u.elo AS challenged_elo
              FROM $c ch JOIN $u u ON u.id = ch.challenged_id
              WHERE ch.challenger_id = %d AND ch.status = 'pending' AND ch.expires_at > UTC_TIMESTAMP()
-             ORDER BY ch.created_at DESC",
+             ORDER BY ch.created_at DESC LIMIT 50",
             $user_id
         ), ARRAY_A ) ?: [];
 
@@ -244,6 +244,15 @@ class Go3D_API_Games {
         $target = Go3D_Auth::get_user( $target_id );
         if ( ! $target || ! (int)$target['email_verified'] ) return Go3D_API::error( 'User not found.', 404 );
         $settings = self::settings_from_request( $req );
+
+        $existing = (int)$wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}go3d_challenges
+             WHERE ((challenger_id = %d AND challenged_id = %d) OR (challenger_id = %d AND challenged_id = %d))
+               AND status = 'pending' AND expires_at > UTC_TIMESTAMP()
+             LIMIT 1",
+            $user_id, $target_id, $target_id, $user_id
+        ) );
+        if ( $existing ) return Go3D_API::ok( [ 'message' => 'Challenge already pending.', 'challenge_id' => $existing ] );
 
         $wpdb->insert( $wpdb->prefix . 'go3d_challenges', [
             'challenger_id' => $user_id,

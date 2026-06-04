@@ -277,6 +277,7 @@ export class GameSession {
   private scoreShowing = false;
   private replayActive = false;
   private replayStep = 0;
+  private undoReloading = false;
   private readonly keyHandler   = (e: KeyboardEvent) => this.onKeydown(e);
   private readonly mouseHandler = () => { if (this.cursorMode) this.deactivateCursor(); };
 
@@ -504,6 +505,8 @@ export class GameSession {
   }
 
   private reloadFromUndo(state?: GameState): void {
+    if (this.undoReloading) return;
+    this.undoReloading = true;
     showToast('Undo applied.', 'success');
     if (this.onReload) this.onReload(state);
     else this.dispose();
@@ -882,6 +885,7 @@ export class SphereGameSession {
   private p1Caps = 0;
   private p2Caps = 0;
   private scoreShowing = false;
+  private undoReloading = false;
 
   /** Node adjacency derived from edges — used only for the end-game territory overlay. */
   private adjacency: number[][];
@@ -1086,6 +1090,8 @@ export class SphereGameSession {
   }
 
   private reloadFromUndo(state?: GameState): void {
+    if (this.undoReloading) return;
+    this.undoReloading = true;
     showToast('Undo applied.', 'success');
     if (this.onReload) this.onReload(state);
     else this.dispose();

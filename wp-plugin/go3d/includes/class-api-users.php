@@ -186,7 +186,7 @@ class Go3D_API_Users {
              FROM $f fr
              JOIN $u u ON u.id = IF(fr.requester_id = %d, fr.addressee_id, fr.requester_id)
              WHERE (fr.requester_id = %d OR fr.addressee_id = %d) AND fr.status = 'accepted'
-             ORDER BY u.username ASC",
+             ORDER BY u.username ASC LIMIT 100",
             $user_id, $user_id, $user_id
         ), ARRAY_A ) ?: [];
 
@@ -195,7 +195,7 @@ class Go3D_API_Users {
              FROM $f fr
              JOIN $u u ON u.id = fr.requester_id
              WHERE fr.addressee_id = %d AND fr.status = 'pending'
-             ORDER BY fr.created_at DESC",
+             ORDER BY fr.created_at DESC LIMIT 50",
             $user_id
         ), ARRAY_A ) ?: [];
 
@@ -204,7 +204,7 @@ class Go3D_API_Users {
              FROM $f fr
              JOIN $u u ON u.id = fr.addressee_id
              WHERE fr.requester_id = %d AND fr.status = 'pending'
-             ORDER BY fr.created_at DESC",
+             ORDER BY fr.created_at DESC LIMIT 50",
             $user_id
         ), ARRAY_A ) ?: [];
 

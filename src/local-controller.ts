@@ -115,6 +115,15 @@ export class LocalController implements GameController {
     if (this.timed) {
       const ts = (state.time_settings ?? null) as Record<string, number> | null;
       this.clock = new GameClock(clockConfigFor(state.time_control, ts));
+      this.clock.setState({
+        timeLeft: (state.p1_time_ms ?? 0) / 1000,
+        periods: state.p1_periods ?? 0,
+        inByo: Boolean(state.p1_in_byoyomi),
+      }, {
+        timeLeft: (state.p2_time_ms ?? 0) / 1000,
+        periods: state.p2_periods ?? 0,
+        inByo: Boolean(state.p2_in_byoyomi),
+      });
       this.clock.onTick = (p1, p2) =>
         this.callbacks.onClockTick(Math.round(p1.timeLeft * 1000), Math.round(p2.timeLeft * 1000));
       this.clock.onFlag = (player) => this.timeoutLoss(player);
@@ -210,6 +219,7 @@ export class LocalController implements GameController {
 
   async requestUndo(): Promise<GameState | null> {
     if (this.finished || this.state.moves.length === 0) return null;
+    this.syncClockState();
     this.rebuildAfterUndo();
     return this.state;
   }
@@ -393,6 +403,17 @@ export class LocalController implements GameController {
     this.state.active_layer = this.activeLayer;
     this.state.consecutive_passes = this.consecutivePasses;
     this.state.board = this.mode === 'sphere' ? this.board.slice() : this.cube!.board;
+  }
+
+  private syncClockState(): void {
+    if (!this.clock) return;
+    const [p1, p2] = this.clock.getState();
+    this.state.p1_time_ms = Math.round(p1.timeLeft * 1000);
+    this.state.p2_time_ms = Math.round(p2.timeLeft * 1000);
+    this.state.p1_periods = p1.periods;
+    this.state.p2_periods = p2.periods;
+    this.state.p1_in_byoyomi = p1.inByo;
+    this.state.p2_in_byoyomi = p2.inByo;
   }
 
   private adjacencyFromEdges(count: number, edges: [number, number][]): number[][] {

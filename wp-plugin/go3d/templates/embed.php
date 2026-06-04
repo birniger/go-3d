@@ -78,8 +78,8 @@
           </label>
           <label id="go3d-ls-cube-size-wrap">Board size
             <select id="go3d-ls-cube-size">
-              <option value="9" selected>9×9×9</option>
               <option value="5">5×5×5</option>
+              <option value="9" selected>9×9×9</option>
               <option value="13">13×13×13</option>
               <option value="19">19×19×19</option>
               <option value="custom">Custom…</option>
@@ -162,8 +162,8 @@
             </label>
             <label id="go3d-cube-size-wrap">Board size
               <select id="go3d-cube-size">
-                <option value="9" selected>9×9×9</option>
                 <option value="5">5×5×5</option>
+                <option value="9" selected>9×9×9</option>
                 <option value="13">13×13×13</option>
                 <option value="19">19×19×19</option>
                 <option value="custom">Custom…</option>
