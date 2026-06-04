@@ -153,6 +153,11 @@ export class LocalController implements GameController {
     }
 
     // cube / stack
+    if (this.mode === 'stack' && y !== this.activeLayer) {
+      this.callbacks.onError('In stack mode you can only play on the active layer.');
+      throw new Error('wrong_layer');
+    }
+
     const ok = this.cube!.place(x, y!, z!);
     if (!ok) { this.callbacks.onError('Illegal move.'); throw new Error('illegal'); }
 

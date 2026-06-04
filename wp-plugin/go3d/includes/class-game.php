@@ -120,10 +120,18 @@ class Go3D_Game {
         if ( $game['player2_id'] !== null )
             return [ 'ok' => false, 'error' => 'Game already has two players.', 'code' => 409 ];
 
-        $wpdb->update( $t, [
+        $joined = $wpdb->update( $t, [
             'player2_id' => $player2_id,
             'status'     => 'active',
-        ], [ 'id' => $game_id ] );
+        ], [
+            'id'         => $game_id,
+            'status'     => 'open',
+            'player2_id' => null,
+        ] );
+
+        if ( $joined !== 1 ) {
+            return [ 'ok' => false, 'error' => 'Game is no longer open for joining.', 'code' => 409 ];
+        }
 
         $labels = self::player_labels( (int)$game['player1_id'], $player2_id );
         Go3D_Pusher::trigger( "private-game-$game_id", 'player-joined', [

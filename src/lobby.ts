@@ -506,10 +506,10 @@ export class Lobby {
             <summary>Notification settings</summary>
             <form id="go3d-notif-form" class="go3d-form">
               <label>Idle reminder after
-                <input type="number" name="notify_idle_hours" value="24" min="0" max="168"> hours (0 = off)
+                <input type="number" name="notify_idle_hours" value="${user.notify_idle_hours ?? 24}" min="0" max="168"> hours (0 = off)
               </label>
               <label>Timeout warning when less than
-                <input type="number" name="notify_timeout_mins" value="60" min="0" max="1440"> minutes remain (0 = off)
+                <input type="number" name="notify_timeout_mins" value="${user.notify_timeout_mins ?? 60}" min="0" max="1440"> minutes remain (0 = off)
               </label>
               <div class="go3d-form-error"></div>
               <button type="submit" class="go3d-btn-primary">Save</button>

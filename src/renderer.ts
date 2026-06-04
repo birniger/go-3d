@@ -240,6 +240,11 @@ export class Renderer {
   private _rafId       = 0;
   private _dotsDirty   = true;
   private _hoshiDirty  = true;
+  private _onResize = () => {
+    const w = window.innerWidth, h = window.innerHeight;
+    this.camera.aspect = w/h; this.camera.updateProjectionMatrix();
+    this.renderer.setSize(w, h); this.composer.setSize(w, h);
+  };
 
   private game:    Go3D;
   private onPlace: (x: number, y: number, z: number) => void;
@@ -1463,11 +1468,7 @@ export class Renderer {
       const pos = this.getHoveredIntersection();
       if (pos) this.onPlace(pos.x, pos.y, pos.z);
     });
-    window.addEventListener('resize', () => {
-      const w = window.innerWidth, h = window.innerHeight;
-      this.camera.aspect = w/h; this.camera.updateProjectionMatrix();
-      this.renderer.setSize(w, h); this.composer.setSize(w, h);
-    });
+    window.addEventListener('resize', this._onResize);
   }
 
   // ── Animate ───────────────────────────────────────────────────────────────
@@ -1712,6 +1713,7 @@ export class Renderer {
   // ── Disposal ──────────────────────────────────────────────────────────────
   dispose() {
     cancelAnimationFrame(this._rafId);
+    window.removeEventListener('resize', this._onResize);
     this.controls.dispose();
     // Dispose all Three.js geometries and materials in the scene
     this.scene.traverse((obj) => {

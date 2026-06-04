@@ -152,11 +152,19 @@ class Go3D_Notifications {
         $warn_mins = (int)( $user['notify_timeout_mins'] ?? 60 );
         if ( $warn_mins <= 0 ) return;
 
-        $clock_ms = $current === 1 ? (int)$game['p1_time_ms'] : (int)$game['p2_time_ms'];
-        if ( $clock_ms === null ) return;
+        $clock_raw = $current === 1 ? $game['p1_time_ms'] : $game['p2_time_ms'];
+        if ( $clock_raw === null ) return;
+        $clock_ms = (int)$clock_raw;
 
         // ' UTC' suffix: last_move_at is a UTC datetime, so parse it as UTC.
         $elapsed_ms  = ( time() - strtotime( $game['last_move_at'] . ' UTC' ) ) * 1000;
+        if ( $game['time_control'] === 'byoyomi' ) {
+            $ts        = json_decode( $game['time_settings'] ?? '{}', true ) ?: [];
+            $period_ms = max( 1, (int)( $ts['byoyomi_time_s'] ?? 0 ) * 1000 );
+            $periods   = (int)( $current === 1 ? $game['p1_periods'] : $game['p2_periods'] );
+            $in_byo    = (bool)( $current === 1 ? $game['p1_in_byoyomi'] : $game['p2_in_byoyomi'] );
+            $clock_ms  = Go3D_Clock::byoyomi_remaining_total( $clock_ms, $periods, $in_byo, $period_ms );
+        }
         $remaining_ms = $clock_ms - $elapsed_ms;
 
         if ( $remaining_ms > $warn_mins * MINUTE_IN_SECONDS * 1000 ) return;

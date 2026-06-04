@@ -91,6 +91,8 @@ export interface User {
   wins:         number;
   losses:       number;
   draws:        number;
+  notify_idle_hours?:   number;
+  notify_timeout_mins?: number;
   created_at:   string;
   last_seen_at: string | null;
 }

@@ -92,11 +92,14 @@ export class MultiplayerController {
     this.channel = this.pusher.subscribe(`private-game-${this.gameState.id}`);
     this.channel.bind('move',          (d: unknown) => this.handleMove(d as MovePayload));
     this.channel.bind('game-over',     (d: unknown) => this.handleGameOver(d as GameOverPayload));
-    this.channel.bind('player-joined', (d: unknown) => {
-      this.callbacks.onPlayerJoined(d as PlayerJoinedPayload);
+    this.channel.bind('player-joined', (d: unknown) => this.handlePlayerJoined(d as PlayerJoinedPayload));
+    this.channel.bind('pusher:subscription_error', () => {
+      console.warn('Go3D: Pusher subscription failed — using polling fallback.');
+      this.callbacks.onError('Realtime sync unavailable; using polling fallback.');
+      this.startPolling();
     });
 
-    if (this.gameState.time_control !== 'none') this.startClock();
+    if (this.gameState.time_control !== 'none' && this.gameState.status === 'active') this.startClock();
   }
 
   disconnect(): void {
@@ -164,6 +167,16 @@ export class MultiplayerController {
     this.callbacks.onClockTick(this.p1Ms, this.p2Ms);
   }
 
+  private handlePlayerJoined(payload: PlayerJoinedPayload): void {
+    const alreadyJoined = this.gameState.status === 'active' && this.gameState.player2_id === payload.player2_id;
+    this.gameState.status = 'active';
+    this.gameState.player2_id = payload.player2_id;
+    this.gameState.player2_name = payload.player2_name ?? this.gameState.player2_name;
+    this.gameState.player2_elo = payload.player2_elo ?? this.gameState.player2_elo;
+    if (!alreadyJoined) this.callbacks.onPlayerJoined(payload);
+    if (this.gameState.time_control !== 'none') this.startClock();
+  }
+
   private handleGameOver(payload: GameOverPayload): void {
     this.stopClock();
     this.callbacks.onGameOver(payload);
@@ -172,6 +185,7 @@ export class MultiplayerController {
   // ── Clock ─────────────────────────────────────────────────────────────────
 
   private startClock(): void {
+    if (this.clockInterval !== null) return;
     this.lastTickAt = Date.now();
     this.clockInterval = setInterval(() => {
       const now     = Date.now();
@@ -205,9 +219,10 @@ export class MultiplayerController {
   private pollMoveNumber = 0;
 
   private startPolling(): void {
+    if (this.pollInterval !== null) return;
     this.pollMoveNumber = this.gameState.moves.length;
     this.pollInterval = setInterval(() => void this.poll(), 3000);
-    if (this.gameState.time_control !== 'none') this.startClock();
+    if (this.gameState.time_control !== 'none' && this.gameState.status === 'active') this.startClock();
   }
 
   private stopPolling(): void {
@@ -220,6 +235,17 @@ export class MultiplayerController {
   private async poll(): Promise<void> {
     try {
       const state = await Games.get(this.gameState.id);
+
+      if (this.gameState.status !== 'active' && state.status === 'active' && state.player2_id) {
+        this.p1Ms = state.p1_time_ms;
+        this.p2Ms = state.p2_time_ms;
+        this.handlePlayerJoined({
+          player2_id:   state.player2_id,
+          player2_name: state.player2_name,
+          player2_elo:  state.player2_elo,
+        });
+      }
+
       const newMoves = state.moves.slice(this.pollMoveNumber);
       // Sphere games have no client engine, so the synthetic payload must carry
       // the authoritative flat board (the polled state already has it).
