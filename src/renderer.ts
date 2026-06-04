@@ -175,6 +175,7 @@ export class Renderer {
   // element stays strictly outside it, so nothing ever clutters the field of
   // play. Everything is preallocated; only buffers/transforms mutate per frame.
   private keepR = 0;                  // radius of the no-fly sphere around play volume
+  private fxReveal = 0;               // 0 when the cube fills the view, ramps to 1 as you zoom out
   private _camDir = new THREE.Vector3();
   private _tmpV  = new THREE.Vector3();
   private _tmpV2 = new THREE.Vector3();
@@ -490,7 +491,7 @@ export class Renderer {
   // outside it, so the field of play is never cluttered.
   private initVoidFX() {
     const ext = (this.game.size - 1) / 2;
-    this.keepR = ext * 2.5;           // well beyond corner distance (ext·√3 ≈ 1.73·ext)
+    this.keepR = ext * 3.6;           // far beyond corner distance (ext·√3 ≈ 1.73·ext)
 
     // — Comet-streaks (great-circle arcs on outer shells) —
     this.streakPos = new Float32Array(this.STREAK_N * 2 * 3);
@@ -543,8 +544,8 @@ export class Renderer {
     const perp = Math.sqrt(Math.max(0, p.lengthSq() - d * d));
     const ext = (this.game.size - 1) / 2;
     // Cube silhouette reaches its corner radius ≈1.73·ext; keep a generous gap
-    // so nothing hugs the edges — fully clear below 2.25·ext, fully shown past 3·ext.
-    const inner = ext * 2.25, outer = ext * 3.0;
+    // so nothing hugs the edges — fully clear below 2.8·ext, fully shown past 3.8·ext.
+    const inner = ext * 2.8, outer = ext * 3.8;
     if (perp >= outer) return 1;
     if (perp <= inner) return 0;
     const t = (perp - inner) / (outer - inner);
@@ -559,7 +560,7 @@ export class Renderer {
   /** Recolour every registered fade-line so its vertices vanish inside the tunnel. */
   private updateFadeLines() {
     for (const fl of this.fadeLines) {
-      const inten = fl.intensity();
+      const inten = fl.intensity() * this.fxReveal;
       const [br, bg, bb] = fl.base;
       fl.mesh.updateWorldMatrix(true, false);
       const mw = fl.mesh.matrixWorld;
@@ -649,7 +650,7 @@ export class Renderer {
   /** A faint outer cage (scaled bounding box) with Tron packets racing its edges. */
   private initCageRunners() {
     const ext = (this.game.size - 1) / 2;
-    const c = ext * 2.1;              // cage half-extent — edges stay well outside the cube
+    const c = ext * 3.0;              // cage half-extent — edges stay well outside the cube
     const C: [number,number,number][] = [
       [-c,-c,-c],[c,-c,-c],[-c,c,-c],[c,c,-c],
       [-c,-c, c],[c,-c, c],[-c,c, c],[c,c, c],
@@ -780,6 +781,16 @@ export class Renderer {
     this._camDir.copy(this.camera.position).normalize();
     const backLimit = -0.1;
 
+    // Zoom-gated reveal: while the cube fills the view (camera close) the whole
+    // rig stays invisible; it fades in only as you dolly out. Distances are in
+    // world units (cube centred at origin); the resting framing sits ≈2.24·size.
+    {
+      const dist = this.camera.position.length();
+      const start = this.game.size * 2.7, full = this.game.size * 4.6;
+      const t = Math.min(1, Math.max(0, (dist - start) / (full - start)));
+      this.fxReveal = t * t * (3 - 2 * t);            // smoothstep
+    }
+
     // — Comet-streaks: rotate along the shell; trail is the prior arc point —
     for (let i = 0; i < this.STREAK_N; i++) {
       const s = this.streakState[i];
@@ -789,7 +800,7 @@ export class Renderer {
       this._streakTail.copy(s.p).applyAxisAngle(s.axis, -s.omega * 11);   // long arc trail
       const t = s.life < 0 ? 0 : s.life / s.max;
       const env = Math.max(0, Math.sin(Math.PI * Math.min(1, Math.max(0, t))));
-      const hi = (0.22 + 1.1 * env) * this.silhouetteFade(s.p);
+      const hi = (0.22 + 1.1 * env) * this.silhouetteFade(s.p) * this.fxReveal;
       const o = i * 6;
       this.streakPos[o]   = s.p.x; this.streakPos[o+1] = s.p.y; this.streakPos[o+2] = s.p.z;
       this.streakCol[o]   = s.r * hi; this.streakCol[o+1] = s.g * hi; this.streakCol[o+2] = s.b * hi;
@@ -808,7 +819,7 @@ export class Renderer {
       ring.node.getWorldPosition(this._tmpV);
       const nm = ring.node.material as THREE.MeshBasicMaterial;
       nm.transparent = true;
-      nm.opacity = this.silhouetteFade(this._tmpV);
+      nm.opacity = this.silhouetteFade(this._tmpV) * this.fxReveal;
     }
 
     // — Sonar pulse-rings (bloom outward, fade) —
@@ -862,7 +873,7 @@ export class Renderer {
       const headT = rs.t, tailT = Math.max(0, rs.t - 0.16);
       const hx = A.x + (B.x-A.x)*headT, hy = A.y + (B.y-A.y)*headT, hz = A.z + (B.z-A.z)*headT;
       const tx = A.x + (B.x-A.x)*tailT, ty = A.y + (B.y-A.y)*tailT, tz = A.z + (B.z-A.z)*tailT;
-      const f = this.silhouetteFade(this._tmpV2.set(hx, hy, hz));
+      const f = this.silhouetteFade(this._tmpV2.set(hx, hy, hz)) * this.fxReveal;
       const o = i*6;
       this.runnerPos[o]=hx; this.runnerPos[o+1]=hy; this.runnerPos[o+2]=hz;
       this.runnerCol[o]=rs.r*f; this.runnerCol[o+1]=rs.g*f; this.runnerCol[o+2]=rs.b*f;
@@ -889,7 +900,7 @@ export class Renderer {
       const flick = 0.4 + 0.6 * Math.abs(Math.sin(gl.flick * 1.6));
       // Fade to nothing whenever the glyph would project over the cube (front
       // or back); stays lively off to the sides.
-      (gl.spr.material as THREE.SpriteMaterial).opacity = flick * this.silhouetteFade(gl.spr.position);
+      (gl.spr.material as THREE.SpriteMaterial).opacity = flick * this.silhouetteFade(gl.spr.position) * this.fxReveal;
       const bob = gl.baseSc * (1 + 0.12 * Math.sin(gl.flick));
       gl.spr.scale.set(bob, bob, bob);
     }
