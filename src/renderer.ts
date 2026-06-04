@@ -180,8 +180,14 @@ export class Renderer {
   private _tmpV2 = new THREE.Vector3();
   private ringPalette = [0x00e5ff, 0xff0077, 0x1affa0];
 
+  // Line meshes whose vertices are faded per-frame against the view-aligned
+  // exclusion tunnel, so no segment ever draws over the cube's footprint —
+  // from ANY camera angle. Each entry carries the mesh, its local vertex
+  // positions, a colour buffer to drive, a base RGB, and a brightness getter.
+  private fadeLines: { mesh: THREE.Object3D; local: Float32Array; colorAttr: THREE.BufferAttribute; base: [number, number, number]; intensity: () => number }[] = [];
+
   // Comet-streaks: ride great-circle arcs on shells well outside the cube.
-  private readonly STREAK_N = 40;
+  private readonly STREAK_N = 30;
   private streaks!: THREE.LineSegments;
   private streakPos!: Float32Array;   // STREAK_N * 2 verts * 3
   private streakCol!: Float32Array;
@@ -194,11 +200,11 @@ export class Renderer {
 
   // Sonar pulse-rings that bloom outward from the keep-out sphere and fade.
   private readonly PULSE_N = 4;
-  private pulses: { mesh: THREE.LineLoop; mat: THREE.LineBasicMaterial; life: number; max: number }[] = [];
+  private pulses: { mesh: THREE.LineLoop; mat: THREE.LineBasicMaterial; life: number; max: number; bright: number; base: [number, number, number] }[] = [];
   private pulseCooldown = 40;
 
   // Outer cage + Tron "edge-runner" packets that race along the cage's edges.
-  private readonly RUNNER_N = 18;
+  private readonly RUNNER_N = 14;
   private runners!: THREE.LineSegments;
   private runnerPos!: Float32Array;
   private runnerCol!: Float32Array;
@@ -210,7 +216,7 @@ export class Renderer {
   private cageEdges: [number, number][] = [];
 
   // Glyph satellites on a far shell — true circular orbits, never dipping in.
-  private readonly GLYPH_N = 14;
+  private readonly GLYPH_N = 10;
   private glyphs: { spr: THREE.Sprite; r: number; speed: number; ang: number; u: THREE.Vector3; v: THREE.Vector3; flick: number; baseSc: number }[] = [];
   private glyphTextures: THREE.Texture[] = [];
 
@@ -523,21 +529,49 @@ export class Renderer {
   }
 
   /**
-   * Visibility multiplier that keeps the orbit rig reading as a frame *around*
-   * the cube. Returns 1 when a point is clear of the board, easing to 0 only
-   * when a NEAR-side element would project directly over the play core — so an
-   * orbiting node never looks like it is sitting on the board. `_camDir` must be
-   * current (set at the top of updateVoidFX); the cube is centred at the origin.
+   * Visibility multiplier for the view-aligned exclusion tunnel. The cube is
+   * centred at the origin; `_camDir` is the unit view direction (current at the
+   * top of updateVoidFX). We measure a point's perpendicular distance from the
+   * line of sight through the cube centre — i.e. how far it sits from the cube
+   * *on screen* — and fade it out as it enters the cube's footprint, on the near
+   * AND far side. Because the tunnel is anchored to the view direction, the
+   * clear zone tracks the camera, so nothing ever overlaps the playing field no
+   * matter how the view is moved. Returns 1 well clear, eases to 0 over the cube.
    */
   private silhouetteFade(p: THREE.Vector3): number {
     const d = p.dot(this._camDir);                 // signed view-depth
-    if (d <= 0) return 1;                           // behind the cube — leave it
     const perp = Math.sqrt(Math.max(0, p.lengthSq() - d * d));
     const ext = (this.game.size - 1) / 2;
-    const inner = ext * 1.0, outer = ext * 1.6;    // fade band over the core
+    // Cube silhouette reaches its corner radius ≈1.73·ext; clear it with margin.
+    const inner = ext * 1.7, outer = ext * 2.1;
     if (perp >= outer) return 1;
     if (perp <= inner) return 0;
-    return (perp - inner) / (outer - inner);
+    const t = (perp - inner) / (outer - inner);
+    return t * t * (3 - 2 * t);                     // smoothstep
+  }
+
+  /** Hex 0xRRGGBB → normalized [r,g,b]. */
+  private hexRGB(hex: number): [number, number, number] {
+    return [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
+  }
+
+  /** Recolour every registered fade-line so its vertices vanish inside the tunnel. */
+  private updateFadeLines() {
+    for (const fl of this.fadeLines) {
+      const inten = fl.intensity();
+      const [br, bg, bb] = fl.base;
+      fl.mesh.updateWorldMatrix(true, false);
+      const mw = fl.mesh.matrixWorld;
+      const local = fl.local, col = fl.colorAttr.array as Float32Array;
+      const n = local.length / 3;
+      for (let i = 0; i < n; i++) {
+        const o = i * 3;
+        this._tmpV.set(local[o], local[o + 1], local[o + 2]).applyMatrix4(mw);
+        const k = inten * this.silhouetteFade(this._tmpV);
+        col[o] = br * k; col[o + 1] = bg * k; col[o + 2] = bb * k;
+      }
+      fl.colorAttr.needsUpdate = true;
+    }
   }
 
   /** Tilted neon loops orbiting outside the cube, each with a runner node. */
@@ -551,11 +585,15 @@ export class Renderer {
         const a = (i / SEG) * Math.PI * 2;
         pts.push(Math.cos(a) * R, Math.sin(a) * R, 0);
       }
+      const local = new Float32Array(pts);
       const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      g.setAttribute('position', new THREE.Float32BufferAttribute(local.slice(), 3));
+      const colorAttr = new THREE.BufferAttribute(new Float32Array(SEG * 3), 3);
+      colorAttr.setUsage(THREE.DynamicDrawUsage);
+      g.setAttribute('color', colorAttr);
       const hue = this.ringPalette[r % 3];
       const mat = new THREE.LineBasicMaterial({
-        color: hue, transparent: true, opacity: 0.5,
+        vertexColors: true, transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false,
       });
       const mesh = new THREE.LineLoop(g, mat);
@@ -569,10 +607,15 @@ export class Renderer {
       mesh.add(node);
       this.scene.add(mesh);
       const axis = new THREE.Vector3(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1).normalize();
-      this.rings.push({
+      const ring = {
         mesh, axis, spin: (0.0022 + Math.random()*0.0035) * (r % 2 ? -1 : 1),
         phase: Math.random()*6, baseOp: 0.4 - r*0.05, mat,
         node, nodeAng: Math.random()*6.28, nodeSpd: (0.03 + Math.random()*0.03) * (r % 2 ? 1 : -1), radius: R,
+      };
+      this.rings.push(ring);
+      this.fadeLines.push({
+        mesh, local, colorAttr, base: this.hexRGB(hue),
+        intensity: () => ring.baseOp + 0.18 * Math.sin(ring.phase),
       });
     }
   }
@@ -582,14 +625,23 @@ export class Renderer {
     const SEG = 96;
     const pts: number[] = [];
     for (let i = 0; i < SEG; i++) { const a = (i/SEG)*Math.PI*2; pts.push(Math.cos(a), Math.sin(a), 0); }
+    const local = new Float32Array(pts);
     for (let i = 0; i < this.PULSE_N; i++) {
       const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pts.slice(), 3));
-      const mat = new THREE.LineBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      g.setAttribute('position', new THREE.Float32BufferAttribute(local.slice(), 3));
+      const colorAttr = new THREE.BufferAttribute(new Float32Array(SEG * 3), 3);
+      colorAttr.setUsage(THREE.DynamicDrawUsage);
+      g.setAttribute('color', colorAttr);
+      const mat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
       const mesh = new THREE.LineLoop(g, mat);
       mesh.frustumCulled = false; mesh.visible = false;
       this.scene.add(mesh);
-      this.pulses.push({ mesh, mat, life: 0, max: 1 });
+      const pulse = { mesh, mat, life: 0, max: 1, bright: 0, base: [0, 0.9, 1] as [number, number, number] };
+      this.pulses.push(pulse);
+      this.fadeLines.push({
+        mesh, local, colorAttr, base: pulse.base,
+        intensity: () => (pulse.mesh.visible ? pulse.bright : 0),
+      });
     }
   }
 
@@ -604,15 +656,23 @@ export class Renderer {
     for (const p of C) this.cageCorners.push(new THREE.Vector3(p[0], p[1], p[2]));
     this.cageEdges = [[0,1],[2,3],[4,5],[6,7],[0,2],[1,3],[4,6],[5,7],[0,4],[1,5],[2,6],[3,7]];
 
-    // Faint static cage.
+    // Faint static cage (per-vertex faded so its edges never cross the cube).
     const cp: number[] = [];
     for (const [a,b] of this.cageEdges) cp.push(...C[a], ...C[b]);
+    const cageLocal = new Float32Array(cp);
     const cg = new THREE.BufferGeometry();
-    cg.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3));
+    cg.setAttribute('position', new THREE.Float32BufferAttribute(cageLocal.slice(), 3));
+    const cageColor = new THREE.BufferAttribute(new Float32Array(cp.length), 3);
+    cageColor.setUsage(THREE.DynamicDrawUsage);
+    cg.setAttribute('color', cageColor);
     const cage = new THREE.LineSegments(cg, new THREE.LineBasicMaterial({
-      color: 0x0a3a4a, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false }));
+      vertexColors: true, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
     cage.frustumCulled = false;
     this.scene.add(cage);
+    this.fadeLines.push({
+      mesh: cage, local: cageLocal, colorAttr: cageColor,
+      base: this.hexRGB(0x0a3a4a), intensity: () => 0.85,
+    });
 
     // Runner trails (LineSegments) + bright heads (Points).
     this.runnerPos = new Float32Array(this.RUNNER_N * 2 * 3);
@@ -741,8 +801,7 @@ export class Renderer {
     // — Containment rings + runner nodes —
     for (const ring of this.rings) {
       ring.mesh.rotateOnAxis(ring.axis, ring.spin);
-      ring.phase += 0.04;
-      ring.mat.opacity = ring.baseOp + 0.18 * Math.sin(ring.phase);
+      ring.phase += 0.04;                       // ring line brightness is per-vertex (updateFadeLines)
       ring.nodeAng += ring.nodeSpd;
       ring.node.position.set(Math.cos(ring.nodeAng) * ring.radius, Math.sin(ring.nodeAng) * ring.radius, 0);
       ring.node.getWorldPosition(this._tmpV);
@@ -760,7 +819,7 @@ export class Renderer {
       const u = p.life / p.max;                       // 0..1
       const R = this.keepR * (1.0 + u * 2.2);         // grows strictly outward
       p.mesh.scale.setScalar(R);
-      p.mat.opacity = 0.7 * Math.max(0, 1 - u) * Math.max(0, Math.sin(Math.PI * Math.min(1, u * 3)));
+      p.bright = 0.8 * Math.max(0, 1 - u) * Math.max(0, Math.sin(Math.PI * Math.min(1, u * 3)));
       if (u >= 1) { p.mesh.visible = false; p.life = 0; }
     }
     this.pulseCooldown -= 1;
@@ -772,7 +831,8 @@ export class Renderer {
         // Orient the ring's local plane to (u,v).
         const m = new THREE.Matrix4().makeBasis(u, v, new THREE.Vector3().crossVectors(u, v));
         p.mesh.quaternion.setFromRotationMatrix(m);
-        p.mat.color.setHex(this.ringPalette[(Math.random()*3)|0]);
+        const [pr, pg, pb] = this.hexRGB(this.ringPalette[(Math.random()*3)|0]);
+        p.base[0] = pr; p.base[1] = pg; p.base[2] = pb;
         p.max = 70 + Math.random()*40;
         p.life = 0; p.mesh.visible = true;
       }
@@ -826,13 +886,16 @@ export class Renderer {
         gl.u.y*cx + gl.v.y*sx,
         gl.u.z*cx + gl.v.z*sx);
       const flick = 0.4 + 0.6 * Math.abs(Math.sin(gl.flick * 1.6));
-      (gl.spr.material as THREE.SpriteMaterial).opacity =
-        gl.spr.position.dot(this._camDir) < backLimit * gl.r
-          ? 0                                                   // hide when behind cube
-          : flick * this.silhouetteFade(gl.spr.position);       // dim over the board core
+      // Fade to nothing whenever the glyph would project over the cube (front
+      // or back); stays lively off to the sides.
+      (gl.spr.material as THREE.SpriteMaterial).opacity = flick * this.silhouetteFade(gl.spr.position);
       const bob = gl.baseSc * (1 + 0.12 * Math.sin(gl.flick));
       gl.spr.scale.set(bob, bob, bob);
     }
+
+    // — Per-vertex fade for ring loops, pulse-rings, and the static cage so no
+    //   line segment ever crosses the cube's on-screen footprint —
+    this.updateFadeLines();
   }
 
   // ── Stones ────────────────────────────────────────────────────────────────
