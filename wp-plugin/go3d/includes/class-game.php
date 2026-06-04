@@ -17,7 +17,7 @@ class Go3D_Game {
         global $wpdb;
         $t = $wpdb->prefix . 'go3d_games';
 
-        $board_size   = in_array( (int)($settings['board_size']   ?? 9), [4,5,6,7,8,9,13,19], true ) ? (int)$settings['board_size']   : 9;
+        $board_size   = in_array( (int)($settings['board_size']   ?? 9), [4,5,7,9,13], true ) ? (int)$settings['board_size']   : 9;
         $scoring_mode = in_array( $settings['scoring_mode'] ?? '', ['chinese','japanese'],      true ) ? $settings['scoring_mode']      : 'chinese';
         $komi         = (float)( $settings['komi']         ?? 6.5 );
         $time_control = in_array( $settings['time_control'] ?? '', ['none','absolute','byoyomi','fischer'], true ) ? $settings['time_control'] : 'none';
@@ -49,7 +49,7 @@ class Go3D_Game {
             'board_hash'       => $hash,
             'history_hashes'   => wp_json_encode( [$hash] ),
             'status'           => 'open',
-            'created_at'       => current_time( 'mysql' ),
+            'created_at'       => current_time( 'mysql', true ),
         ] );
 
         $game_id = (int) $wpdb->insert_id;
@@ -113,15 +113,20 @@ class Go3D_Game {
         if ( (int)$game['current_player'] !== $player_slot )
             return [ 'ok' => false, 'error' => 'It is not your turn.', 'code' => 409 ];
 
-        $type    = $move_data['type'] ?? '';
-        $time_ms = isset( $move_data['time_ms'] ) ? (int)$move_data['time_ms'] : null;
+        $type = $move_data['type'] ?? '';
 
-        // Deduct clock time
+        // Clock deduction is SERVER-AUTHORITATIVE: we never trust a client-sent
+        // time_ms. The elapsed time is the wall-clock gap between this move and
+        // the previous one (last_move_at), so a tampered or laggy client can't
+        // gain or lose time.
         $p1_time_ms = $game['p1_time_ms'] !== null ? (int)$game['p1_time_ms'] : null;
         $p2_time_ms = $game['p2_time_ms'] !== null ? (int)$game['p2_time_ms'] : null;
-        if ( $time_ms !== null && $game['time_control'] !== 'none' ) {
-            if ( $player_slot === 1 && $p1_time_ms !== null ) $p1_time_ms = max( 0, $p1_time_ms - $time_ms );
-            if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms = max( 0, $p2_time_ms - $time_ms );
+        $time_ms    = null;
+        if ( $game['time_control'] !== 'none' && ! empty( $game['last_move_at'] ) ) {
+            $elapsed_ms = max( 0, ( time() - strtotime( $game['last_move_at'] . ' UTC' ) ) * 1000 );
+            $time_ms    = $elapsed_ms;
+            if ( $player_slot === 1 && $p1_time_ms !== null ) $p1_time_ms = max( 0, $p1_time_ms - $elapsed_ms );
+            if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms = max( 0, $p2_time_ms - $elapsed_ms );
         }
 
         if ( $type === 'resign' ) {
@@ -156,10 +161,10 @@ class Go3D_Game {
             'player_id'   => $user_id,
             'type'        => 'pass',
             'time_ms'     => $time_ms,
-            'created_at'  => current_time( 'mysql' ),
+            'created_at'  => current_time( 'mysql', true ),
         ] );
 
-        $now = current_time( 'mysql' );
+        $now = current_time( 'mysql', true );
 
         if ( $consecutive >= 2 ) {
             // Two consecutive passes → score and end
@@ -200,7 +205,7 @@ class Go3D_Game {
 
         // Reconstruct board from move history
         $moves = self::get_moves( (int)$game['id'] );
-        $logic = Go3D_Game_Logic::replay( (int)$game['board_size'], $moves );
+        $logic = Go3D_Game_Logic::replay( (int)$game['board_size'], $moves, (int)$game['player1_id'] );
 
         // Superko history
         $history = json_decode( $game['history_hashes'] ?? '[]', true ) ?: [];
@@ -222,7 +227,7 @@ class Go3D_Game {
             'y'           => $y,
             'z'           => $z,
             'time_ms'     => $time_ms,
-            'created_at'  => current_time( 'mysql' ),
+            'created_at'  => current_time( 'mysql', true ),
         ] );
 
         $next_player = 3 - $player_slot;
@@ -234,7 +239,7 @@ class Go3D_Game {
             'history_hashes'     => wp_json_encode( $history ),
             'p1_time_ms'         => $p1_time_ms,
             'p2_time_ms'         => $p2_time_ms,
-            'last_move_at'       => current_time( 'mysql' ),
+            'last_move_at'       => current_time( 'mysql', true ),
         ], [ 'id' => $game['id'] ] );
 
         $payload = [
@@ -273,7 +278,7 @@ class Go3D_Game {
                 'player_id'   => $user_id,
                 'type'        => 'resign',
                 'time_ms'     => $time_ms,
-                'created_at'  => current_time( 'mysql' ),
+                'created_at'  => current_time( 'mysql', true ),
             ] );
         }
 
@@ -288,47 +293,38 @@ class Go3D_Game {
      * End game by double-pass → count territory.
      */
     private static function end_by_scoring( array $game, int $move_number, ?int $p1_time_ms, ?int $p2_time_ms ): array {
-        $moves  = self::get_moves( (int)$game['id'] );
-        $logic  = Go3D_Game_Logic::replay( (int)$game['board_size'], $moves );
-        $terr   = $logic->count_territory();
-        $komi   = (float)$game['komi'];
-        $mode   = $game['scoring_mode'];
+        $moves   = self::get_moves( (int)$game['id'] );
+        $p1_id   = (int)$game['player1_id'];
+        $p2_id   = (int)$game['player2_id'];
+        $logic   = Go3D_Game_Logic::replay( (int)$game['board_size'], $moves, $p1_id );
+        $terr    = $logic->count_territory();
+        $komi    = (float)$game['komi'];
+        $mode    = $game['scoring_mode'];
 
         if ( $mode === 'japanese' ) {
-            // Count prisoners from move log
-            $prisoners = [1 => 0, 2 => 0];
-            foreach ( $moves as $m ) {
-                // captured stones go to the capturing player's count — but
-                // we don't store per-move captured count in the DB.
-                // Re-replay incrementally to count captures.
-            }
-            // Simple approach: replay capture counts
+            // Japanese: territory + prisoners (stones you captured) + komi.
+            // The DB doesn't store per-move capture counts, so replay the game
+            // incrementally and tally captures by the capturing player's slot.
             $p1_captures = 0; $p2_captures = 0;
             $logic2 = new Go3D_Game_Logic( (int)$game['board_size'] );
             foreach ( $moves as $m ) {
-                if ( $m['type'] === 'place' ) {
-                    $slot = (int)$m['player_id'] % 2 === 0 ? 2 : 1; // approximation
-                    // Determine slot from game
-                    if ( (int)$m['player_id'] === (int)$game['player1_id'] ) $slot = 1;
-                    elseif ( (int)$m['player_id'] === (int)$game['player2_id'] ) $slot = 2;
-                    $r = $logic2->place( (int)$m['x'], (int)$m['y'], (int)$m['z'], $slot );
-                    if ( $r['ok'] ) {
-                        $cap_count = count( $r['captured'] );
-                        if ( $slot === 1 ) $p2_captures += $cap_count; // p1 captures p2's stones
-                        else              $p1_captures += $cap_count;
-                    }
+                if ( $m['type'] !== 'place' ) continue;
+                $slot = ( (int)$m['player_id'] === $p1_id ) ? 1 : 2;
+                $r = $logic2->place( (int)$m['x'], (int)$m['y'], (int)$m['z'], $slot );
+                if ( $r['ok'] ) {
+                    $cap_count = count( $r['captured'] );
+                    // A slot-1 (Black) move captures White's stones → adds to P1's prisoners.
+                    if ( $slot === 1 ) $p1_captures += $cap_count;
+                    else               $p2_captures += $cap_count;
                 }
             }
             $p1_score = $terr['black'] + $p1_captures;
             $p2_score = $terr['white'] + $p2_captures + $komi;
         } else {
-            // Chinese: territory + stones on board + komi
+            // Chinese: territory + stones on board + komi.
             $p1_score = $terr['black'] + $terr['blackStones'];
             $p2_score = $terr['white'] + $terr['whiteStones'] + $komi;
         }
-
-        $p1_id = (int)$game['player1_id'];
-        $p2_id = (int)$game['player2_id'];
 
         if ( abs( $p1_score - $p2_score ) < 0.001 ) {
             // Draw (shouldn't happen with komi but handle it)
@@ -351,21 +347,20 @@ class Go3D_Game {
     private static function finalise_game( array $game, ?int $winner_id, ?int $loser_id, string $end_reason, ?float $p1_score, ?float $p2_score, ?int $p1_time_ms, ?int $p2_time_ms ): array {
         global $wpdb;
         $gt  = $wpdb->prefix . 'go3d_games';
-        $now = current_time( 'mysql' );
+        $now = current_time( 'mysql', true );
 
         $p1_id = (int)$game['player1_id'];
         $p2_id = $game['player2_id'] ? (int)$game['player2_id'] : null;
 
-        // ELO
+        // ELO + win/loss/draw stats. Every finished two-player game counts,
+        // including draws (which update games_played and the draw column).
         $elo_change_p1 = 0;
         $elo_change_p2 = 0;
-        if ( $p2_id && $end_reason !== 'score_draw' ) {
-            $outcome = null;
+        if ( $p2_id ) {
             if ( $winner_id === $p1_id )      $outcome = 'p1_wins';
-            elseif ( $winner_id === $p2_id )   $outcome = 'p2_wins';
-            if ( $outcome ) {
-                [ $elo_change_p1, $elo_change_p2 ] = Go3D_Elo::update( $p1_id, $p2_id, $outcome );
-            }
+            elseif ( $winner_id === $p2_id )  $outcome = 'p2_wins';
+            else                              $outcome = 'draw';
+            [ $elo_change_p1, $elo_change_p2 ] = Go3D_Elo::update( $p1_id, $p2_id, $outcome );
         }
 
         $wpdb->update( $gt, [
@@ -432,7 +427,7 @@ class Go3D_Game {
         if ( ! $game ) return null;
 
         $moves = self::get_moves( $game_id );
-        $logic = Go3D_Game_Logic::replay( (int)$game['board_size'], $moves );
+        $logic = Go3D_Game_Logic::replay( (int)$game['board_size'], $moves, (int)$game['player1_id'] );
 
         return [
             'id'                 => (int)$game['id'],
@@ -470,15 +465,20 @@ class Go3D_Game {
         global $wpdb;
         $t = $wpdb->prefix . 'go3d_games';
 
-        $status_sql = $wpdb->prepare( 'status = %s', $status );
+        $u = $wpdb->prefix . 'go3d_users';
+
+        $status_sql = $wpdb->prepare( 'g.status = %s', $status );
         $rows = $wpdb->get_results( $wpdb->prepare(
-            "SELECT id, player1_id, player2_id, board_size, scoring_mode, komi,
-                    time_control, current_player, status, winner_id, end_reason,
-                    p1_score, p2_score, elo_change_p1, elo_change_p2,
-                    created_at, last_move_at, finished_at
-             FROM $t
-             WHERE (player1_id = %d OR player2_id = %d) AND $status_sql
-             ORDER BY last_move_at DESC
+            "SELECT g.id, g.player1_id, g.player2_id, g.board_size, g.scoring_mode, g.komi,
+                    g.time_control, g.current_player, g.status, g.winner_id, g.end_reason,
+                    g.p1_score, g.p2_score, g.elo_change_p1, g.elo_change_p2,
+                    g.created_at, g.last_move_at, g.finished_at,
+                    u1.username AS player1_name, u2.username AS player2_name
+             FROM $t g
+             LEFT JOIN $u u1 ON u1.id = g.player1_id
+             LEFT JOIN $u u2 ON u2.id = g.player2_id
+             WHERE (g.player1_id = %d OR g.player2_id = %d) AND $status_sql
+             ORDER BY g.last_move_at DESC
              LIMIT %d OFFSET %d",
             $user_id, $user_id, $limit, $offset
         ), ARRAY_A ) ?: [];
@@ -493,9 +493,13 @@ class Go3D_Game {
     public static function list_open( int $limit = 20, int $offset = 0 ): array {
         global $wpdb;
         $t = $wpdb->prefix . 'go3d_games';
+        $u = $wpdb->prefix . 'go3d_users';
         return $wpdb->get_results( $wpdb->prepare(
-            "SELECT id, player1_id, board_size, scoring_mode, komi, time_control, created_at
-             FROM $t WHERE status = 'open' ORDER BY created_at DESC LIMIT %d OFFSET %d",
+            "SELECT g.id, g.player1_id, g.board_size, g.scoring_mode, g.komi, g.time_control, g.created_at,
+                    u1.username AS player1_name
+             FROM $t g
+             LEFT JOIN $u u1 ON u1.id = g.player1_id
+             WHERE g.status = 'open' ORDER BY g.created_at DESC LIMIT %d OFFSET %d",
             $limit, $offset
         ), ARRAY_A ) ?: [];
     }
@@ -516,11 +520,17 @@ class Go3D_Game {
         ) ?: [];
 
         foreach ( $games as $game ) {
-            $current = (int)$game['current_player'];
-            $clock   = $current === 1 ? (int)$game['p1_time_ms'] : (int)$game['p2_time_ms'];
-            if ( $game['last_move_at'] === null ) continue;
+            $current   = (int)$game['current_player'];
+            $clock_raw = $current === 1 ? $game['p1_time_ms'] : $game['p2_time_ms'];
 
-            $elapsed_ms = ( time() - strtotime( $game['last_move_at'] ) ) * 1000;
+            // Skip games with no usable clock yet:
+            //  – no move has been made (last_move_at null) → clock not running
+            //  – the current player's clock column is NULL (not an absolute
+            //    main-time game) → casting NULL to 0 would falsely time them out
+            if ( empty( $game['last_move_at'] ) || $clock_raw === null ) continue;
+            $clock = (int)$clock_raw;
+
+            $elapsed_ms = ( time() - strtotime( $game['last_move_at'] . ' UTC' ) ) * 1000;
             if ( $elapsed_ms > $clock ) {
                 // This player timed out
                 $loser_id  = (int)$game[ "player{$current}_id" ];

@@ -1,0 +1,37 @@
+Go³D — making the Authorization header reach PHP on shared hosting
+==================================================================
+
+The plugin authenticates REST requests with a Bearer token sent in the
+HTTP `Authorization` header. On many Apache + PHP-CGI/FastCGI setups
+(including Hetzner shared hosting) Apache strips this header before PHP
+sees it, so logins appear to "work" but every following request is
+treated as logged-out.
+
+Go3D_JWT::from_request() already checks several fallback locations, but
+the most reliable fix is one line in your site's root `.htaccess` that
+copies the header into an environment variable PHP can read.
+
+WHEN YOU NEED THIS
+------------------
+Only if you find you get logged out immediately after logging in, or the
+browser console shows 401 responses from /wp-json/go3d/v1/... requests.
+Most Nginx and Apache+mod_php hosts do NOT need it.
+
+WHAT TO ADD
+-----------
+Open the `.htaccess` file in your WordPress root (same folder as
+wp-config.php) and add this block ABOVE the `# BEGIN WordPress` line:
+
+    # BEGIN Go3D Authorization header fix
+    <IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTP:Authorization} ^(.*)$
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+    </IfModule>
+    # END Go3D Authorization header fix
+
+Save the file. No restart is needed. Log out and back in to confirm the
+session now persists.
+
+This rule sets REDIRECT_HTTP_AUTHORIZATION, which the plugin reads as a
+fallback. It is safe, standard, and used by many REST/JWT plugins.

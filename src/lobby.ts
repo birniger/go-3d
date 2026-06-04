@@ -239,7 +239,7 @@ export class Lobby {
         for (const g of games) {
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td>${escHtml(String(g.player1_id))}</td>
+            <td>${escHtml(g.player1_name ?? `Player ${g.player1_id}`)}</td>
             <td>${g.board_size}³</td>
             <td>${escHtml(g.scoring_mode)}</td>
             <td>${g.komi}</td>
@@ -282,12 +282,15 @@ export class Lobby {
       } else {
         empty.style.display = 'none';
         for (const g of games) {
-          const oppId     = g.player1_id === myId ? g.player2_id : g.player1_id;
-          const myTurn    = g.current_player === (g.player1_id === myId ? 1 : 2);
+          const iAmP1     = g.player1_id === myId;
+          const oppName   = iAmP1 ? g.player2_name : g.player1_name;
+          const oppId     = iAmP1 ? g.player2_id : g.player1_id;
+          const oppLabel  = oppName ?? (oppId ? `Player ${oppId}` : '(waiting)');
+          const myTurn    = g.current_player === (iAmP1 ? 1 : 2);
           const lastMove  = g.last_move_at ? new Date(g.last_move_at).toLocaleDateString() : '—';
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td>${oppId ?? '(waiting)'}</td>
+            <td>${escHtml(oppLabel)}</td>
             <td>${g.board_size}³</td>
             <td>${myTurn ? '<span class="go3d-chip go3d-chip-green">Your turn</span>' : '—'}</td>
             <td>${escHtml(lastMove)}</td>

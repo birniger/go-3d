@@ -113,6 +113,8 @@ export interface GameSummary {
   created_at:      string;
   last_move_at:    string | null;
   finished_at:     string | null;
+  player1_name?:   string | null;
+  player2_name?:   string | null;
 }
 
 export interface GameState extends GameSummary {

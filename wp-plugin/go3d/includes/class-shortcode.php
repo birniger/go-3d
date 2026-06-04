@@ -21,42 +21,54 @@ class Go3D_Shortcode {
     }
 
     private static function enqueue_assets(): void {
-        $dist   = GO3D_PLUGIN_URL . 'assets/dist/';
-        $ver    = GO3D_VERSION;
+        $dist = GO3D_PLUGIN_URL . 'assets/dist/';
+        $ver  = GO3D_VERSION;
 
-        // Vite manifest-based asset loading
+        // Resolve the hashed filenames of the multiplayer entry (src/app.ts)
+        // and any CSS it imports from the Vite manifest.
         $manifest_path = GO3D_PLUGIN_DIR . 'assets/dist/.vite/manifest.json';
-        $entry_js  = 'assets/go3d-app.js';
-        $entry_css = 'assets/go3d-app.css';
+        $entry_js   = 'assets/app.js';
+        $entry_css  = [];
 
         if ( file_exists( $manifest_path ) ) {
             $manifest = json_decode( file_get_contents( $manifest_path ), true ) ?? [];
-            // Find the main entry
-            foreach ( $manifest as $src => $info ) {
-                if ( ! empty( $info['isEntry'] ) ) {
-                    $entry_js = $info['file'] ?? $entry_js;
-                    if ( ! empty( $info['css'] ) ) {
-                        $entry_css = $info['css'][0] ?? $entry_css;
+            $entry    = $manifest['src/app.ts'] ?? null;
+            // Fall back to the first isEntry whose src looks like our app entry.
+            if ( ! $entry ) {
+                foreach ( $manifest as $src => $info ) {
+                    if ( ! empty( $info['isEntry'] ) && false !== strpos( (string) $src, 'app' ) ) {
+                        $entry = $info;
+                        break;
                     }
-                    break;
                 }
+            }
+            if ( $entry ) {
+                $entry_js  = $entry['file'] ?? $entry_js;
+                $entry_css = $entry['css'] ?? [];
             }
         }
 
-        wp_enqueue_style(
-            'go3d-app',
-            $dist . ltrim( $entry_css, '/' ),
-            [],
-            $ver
-        );
+        // Hand-written plugin stylesheet (the .go3d-* UI). Always present.
+        wp_enqueue_style( 'go3d-ui', GO3D_PLUGIN_URL . 'assets/go3d.css', [], $ver );
+
+        // Any CSS Vite split out of the bundle.
+        foreach ( $entry_css as $i => $css ) {
+            wp_enqueue_style( 'go3d-app-' . $i, $dist . ltrim( $css, '/' ), [], $ver );
+        }
+
+        // Pusher real-time client (CDN). The bundle expects a global `Pusher`;
+        // if this fails to load the controller falls back to HTTP polling.
+        wp_enqueue_script( 'pusher-js', 'https://js.pusher.com/8.2.0/pusher.min.js', [], '8.2.0', true );
 
         wp_enqueue_script(
             'go3d-app',
             $dist . ltrim( $entry_js, '/' ),
-            [],
+            [ 'pusher-js' ], // ensure Pusher is defined before the bundle runs
             $ver,
             true // load in footer
         );
+        // It's an ES module.
+        add_filter( 'script_loader_tag', [ __CLASS__, 'module_type' ], 10, 3 );
 
         // Inline config for the JS bundle
         $pusher_key     = get_option( 'go3d_pusher_key',     '' );
@@ -72,5 +84,13 @@ class Go3D_Shortcode {
                 'nonce'         => wp_create_nonce( 'wp_rest' ),
             ] )
         ), 'before' );
+    }
+
+    /** Mark the Vite bundle as an ES module so its imports resolve. */
+    public static function module_type( string $tag, string $handle, string $src ): string {
+        if ( 'go3d-app' === $handle ) {
+            $tag = '<script type="module" src="' . esc_url( $src ) . '" id="go3d-app-js"></script>' . "\n";
+        }
+        return $tag;
     }
 }

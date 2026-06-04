@@ -45,15 +45,21 @@ class Go3D_Auth {
             return [ 'ok' => false, 'error' => 'An account with that email already exists.', 'code' => 409 ];
         }
 
-        $token = bin2hex( random_bytes( 32 ) );
-        $wpdb->insert( $t, [
+        $token  = bin2hex( random_bytes( 32 ) );
+        $result = $wpdb->insert( $t, [
             'username'           => $username,
             'email'              => $email,
             'password_hash'      => password_hash( $password, PASSWORD_BCRYPT, [ 'cost' => 12 ] ),
             'email_verified'     => 0,
             'verification_token' => $token,
-            'created_at'         => current_time( 'mysql' ),
+            'created_at'         => current_time( 'mysql', true ),
         ] );
+
+        // $wpdb->insert returns false on failure (e.g. a race on the unique
+        // username/email index between the check above and this insert).
+        if ( false === $result || ! $wpdb->insert_id ) {
+            return [ 'ok' => false, 'error' => 'Could not create your account. Please try again.', 'code' => 500 ];
+        }
         $user_id = (int) $wpdb->insert_id;
 
         // Bump rate-limit counter
@@ -101,7 +107,7 @@ class Go3D_Auth {
             $wpdb->update( $t, [ 'password_hash' => password_hash( $password, PASSWORD_BCRYPT, [ 'cost' => 12 ] ) ], [ 'id' => $user['id'] ] );
         }
 
-        $wpdb->update( $t, [ 'last_seen_at' => current_time( 'mysql' ) ], [ 'id' => $user['id'] ] );
+        $wpdb->update( $t, [ 'last_seen_at' => current_time( 'mysql', true ) ], [ 'id' => $user['id'] ] );
 
         $token = Go3D_JWT::encode( (int) $user['id'] );
         return [ 'ok' => true, 'token' => $token, 'user' => self::public_user( $user ) ];
@@ -138,7 +144,7 @@ class Go3D_Auth {
         global $wpdb;
         $t    = $wpdb->prefix . 'go3d_users';
         $user = $wpdb->get_row(
-            $wpdb->prepare( "SELECT id FROM $t WHERE reset_token = %s AND reset_expires > %s", $token, current_time( 'mysql' ) ),
+            $wpdb->prepare( "SELECT id FROM $t WHERE reset_token = %s AND reset_expires > %s", $token, gmdate( 'Y-m-d H:i:s' ) ),
             ARRAY_A
         );
         if ( ! $user ) return false;

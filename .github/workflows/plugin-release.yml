@@ -67,8 +67,9 @@ jobs:
       - name: Package plugin ZIP
         run: |
           cd wp-plugin
+          # NOTE: keep assets/dist/.vite/manifest.json — the shortcode reads it
+          # to resolve the hashed entry filenames. Only strip OS cruft.
           zip -r "../${{ steps.version.outputs.zip }}" go3d/ \
-            --exclude "go3d/assets/dist/.vite/*" \
             --exclude "*/.DS_Store" \
             --exclude "*/__MACOSX/*"
 

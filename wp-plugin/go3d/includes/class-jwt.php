@@ -57,15 +57,46 @@ class Go3D_JWT {
         return $data;
     }
 
-    /** Extract JWT from the Authorization header. */
+    /**
+     * Extract JWT from the Authorization header.
+     *
+     * On Apache/CGI/FastCGI setups (common on shared hosts like Hetzner) the
+     * Authorization header is frequently stripped from $_SERVER. We try every
+     * known location in turn:
+     *   1. $_SERVER['HTTP_AUTHORIZATION']            — standard
+     *   2. $_SERVER['REDIRECT_HTTP_AUTHORIZATION']   — set by the .htaccess rule
+     *   3. apache_request_headers() / getallheaders() — last resort
+     *
+     * The plugin ships an .htaccess snippet that repopulates (2); see
+     * docs/htaccess-auth.txt.
+     */
     public static function from_request(): ?string {
-        $header = isset( $_SERVER['HTTP_AUTHORIZATION'] )
-            ? sanitize_text_field( $_SERVER['HTTP_AUTHORIZATION'] )
-            : ( function_exists( 'apache_request_headers' )
-                ? ( apache_request_headers()['Authorization'] ?? null )
-                : null );
+        $header = null;
+
+        if ( ! empty( $_SERVER['HTTP_AUTHORIZATION'] ) ) {
+            $header = $_SERVER['HTTP_AUTHORIZATION'];
+        } elseif ( ! empty( $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ) ) {
+            $header = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+        } else {
+            $all = null;
+            if ( function_exists( 'apache_request_headers' ) ) {
+                $all = apache_request_headers();
+            } elseif ( function_exists( 'getallheaders' ) ) {
+                $all = getallheaders();
+            }
+            if ( is_array( $all ) ) {
+                // Header names are case-insensitive — normalise before lookup.
+                foreach ( $all as $name => $value ) {
+                    if ( strcasecmp( $name, 'Authorization' ) === 0 ) {
+                        $header = $value;
+                        break;
+                    }
+                }
+            }
+        }
 
         if ( ! $header ) return null;
+        $header = sanitize_text_field( $header );
         if ( preg_match( '/^Bearer\s+(.+)$/i', $header, $m ) ) return $m[1];
         return null;
     }

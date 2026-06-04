@@ -1,0 +1,250 @@
+/*
+ * Go³D — embed UI styles.
+ * Scoped under #go3d-root so they don't bleed into the host WordPress theme.
+ * Cyberpunk palette: near-black bg, cyan/magenta accents, mono type.
+ */
+
+#go3d-root {
+  --go3d-bg:      #05060a;
+  --go3d-panel:   #0d1018;
+  --go3d-border:  #1d2433;
+  --go3d-cyan:    #00e5ff;
+  --go3d-magenta: #ff0077;
+  --go3d-text:    #cdd6e4;
+  --go3d-muted:   #6b7689;
+  --go3d-green:   #19f5a0;
+  --go3d-danger:  #ff3b30;
+
+  position: relative;
+  color: var(--go3d-text);
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+#go3d-root *,
+#go3d-root *::before,
+#go3d-root *::after { box-sizing: border-box; }
+
+/* ── Screens ─────────────────────────────────────────────────────────────── */
+.go3d-screen { width: 100%; }
+
+#go3d-auth,
+#go3d-lobby,
+#go3d-profile {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
+.go3d-form { display: flex; flex-direction: column; gap: 0.75rem; }
+.go3d-form h2 { margin: 0 0 0.25rem; color: var(--go3d-cyan); font-weight: 600; letter-spacing: 0.04em; }
+
+.go3d-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--go3d-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#go3d-root input,
+#go3d-root select,
+#go3d-root textarea {
+  background: var(--go3d-bg);
+  border: 1px solid var(--go3d-border);
+  border-radius: 6px;
+  color: var(--go3d-text);
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+  font-size: 0.95rem;
+}
+#go3d-root input:focus,
+#go3d-root select:focus,
+#go3d-root textarea:focus {
+  outline: none;
+  border-color: var(--go3d-cyan);
+  box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.18);
+}
+
+.go3d-form-row { display: flex; flex-wrap: wrap; gap: 1rem; }
+.go3d-form-row > label { flex: 1 1 8rem; }
+.go3d-form-error { min-height: 1.2em; color: var(--go3d-danger); font-size: 0.85rem; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+#go3d-root button { font: inherit; cursor: pointer; }
+
+.go3d-btn-primary {
+  background: linear-gradient(135deg, var(--go3d-cyan), #0091ff);
+  color: #02121a;
+  border: none;
+  border-radius: 6px;
+  padding: 0.6rem 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  transition: filter 0.15s ease, transform 0.05s ease;
+}
+.go3d-btn-primary:hover { filter: brightness(1.12); }
+.go3d-btn-primary:active { transform: translateY(1px); }
+.go3d-btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.go3d-btn-ghost {
+  background: transparent;
+  color: var(--go3d-text);
+  border: 1px solid var(--go3d-border);
+  border-radius: 6px;
+  padding: 0.45rem 0.9rem;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.go3d-btn-ghost:hover { border-color: var(--go3d-cyan); color: var(--go3d-cyan); }
+.go3d-btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+.go3d-btn-sm { padding: 0.25rem 0.55rem; font-size: 0.8rem; }
+.go3d-btn-danger { color: var(--go3d-danger); border-color: rgba(255, 59, 48, 0.4); }
+.go3d-btn-danger:hover { border-color: var(--go3d-danger); color: #fff; background: rgba(255,59,48,0.12); }
+
+/* ── Auth tabs ───────────────────────────────────────────────────────────── */
+.go3d-auth-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.go3d-tab-btn {
+  flex: 1;
+  background: var(--go3d-panel);
+  color: var(--go3d-muted);
+  border: 1px solid var(--go3d-border);
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+.go3d-tab-btn.active { color: var(--go3d-cyan); border-color: var(--go3d-cyan); }
+.go3d-tab-panel { display: none; }
+.go3d-tab-panel.active { display: flex; }
+
+/* ── Lobby ───────────────────────────────────────────────────────────────── */
+.go3d-lobby-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--go3d-border);
+}
+.go3d-logo { font-weight: 800; font-size: 1.4rem; color: var(--go3d-cyan); letter-spacing: 0.08em; }
+.go3d-user-bar { display: flex; align-items: center; gap: 0.85rem; }
+.go3d-user-bar a { color: var(--go3d-text); text-decoration: none; }
+.go3d-user-bar a:hover { color: var(--go3d-cyan); }
+
+.go3d-elo-badge {
+  background: rgba(0, 229, 255, 0.1);
+  color: var(--go3d-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.35);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.go3d-lobby-body { display: flex; flex-direction: column; gap: 1.25rem; }
+.go3d-panel {
+  background: var(--go3d-panel);
+  border: 1px solid var(--go3d-border);
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+}
+.go3d-panel h3 { margin: 0 0 0.85rem; color: var(--go3d-text); font-size: 1.05rem; }
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+.go3d-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.go3d-table th {
+  text-align: left;
+  color: var(--go3d-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.72rem;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--go3d-border);
+}
+.go3d-table td { padding: 0.55rem 0.6rem; border-bottom: 1px solid rgba(29, 36, 51, 0.5); }
+.go3d-empty-msg { color: var(--go3d-muted); font-style: italic; padding: 0.5rem 0; }
+
+.go3d-chip {
+  display: inline-block;
+  background: rgba(107, 118, 137, 0.18);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.78rem;
+  color: var(--go3d-muted);
+}
+.go3d-chip-green { background: rgba(25, 245, 160, 0.14); color: var(--go3d-green); }
+
+/* ── Profile ─────────────────────────────────────────────────────────────── */
+.go3d-screen-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.go3d-profile-hero { display: flex; gap: 1.25rem; align-items: center; margin-bottom: 1.25rem; }
+.go3d-avatar, .go3d-avatar-placeholder {
+  width: 72px; height: 72px; border-radius: 50%;
+  object-fit: cover;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--go3d-panel);
+  border: 1px solid var(--go3d-border);
+  font-size: 2rem; color: var(--go3d-cyan);
+}
+.go3d-bio { color: var(--go3d-muted); }
+
+/* ── Game screen ─────────────────────────────────────────────────────────── */
+#go3d-game-screen { position: fixed; inset: 0; z-index: 99999; pointer-events: none; }
+#go3d-game-screen > * { pointer-events: auto; }
+/* The WebGL canvas is appended to <body>; sit it behind the overlay UI. */
+#go3d-game-screen canvas, body > canvas { z-index: 1; }
+
+#go3d-game-topbar {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(180deg, rgba(5,6,10,0.92), rgba(5,6,10,0));
+}
+#go3d-player-info { display: flex; align-items: center; gap: 1rem; }
+.go3d-player-badge { display: flex; align-items: center; gap: 0.4rem; }
+.go3d-stone-dot { font-size: 1.1rem; }
+.go3d-stone-black { color: #111; text-shadow: 0 0 3px #000, 0 0 6px var(--go3d-cyan); }
+.go3d-stone-white { color: #fff; text-shadow: 0 0 6px var(--go3d-magenta); }
+.go3d-turn-label { color: var(--go3d-cyan); font-weight: 700; letter-spacing: 0.04em; }
+
+#go3d-clock-bar { display: flex; gap: 1rem; }
+.go3d-clock-cell { display: flex; flex-direction: column; align-items: flex-end; }
+.go3d-clock-label { font-size: 0.7rem; color: var(--go3d-muted); text-transform: uppercase; }
+.go3d-clock { font-variant-numeric: tabular-nums; font-size: 1.1rem; }
+.go3d-clock-active { color: var(--go3d-cyan); }
+.go3d-clock-urgent { color: #ffcc00; }
+.go3d-clock-flagged { color: var(--go3d-danger); }
+
+#go3d-game-actions {
+  position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 0.75rem;
+}
+
+#go3d-waiting-overlay {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: rgba(5, 6, 10, 0.85);
+  border: 1px solid var(--go3d-border);
+  border-radius: 10px;
+  padding: 0.85rem 1.5rem;
+  color: var(--go3d-cyan);
+  letter-spacing: 0.04em;
+}
+
+/* ── Toast ───────────────────────────────────────────────────────────────── */
+#go3d-toast {
+  position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%) translateY(150%);
+  z-index: 100000;
+  background: var(--go3d-panel);
+  border: 1px solid var(--go3d-border);
+  border-radius: 8px;
+  padding: 0.7rem 1.2rem;
+  max-width: 90vw;
+  opacity: 0;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+.go3d-toast-visible { transform: translateX(-50%) translateY(0) !important; opacity: 1 !important; }
+.go3d-toast-success { border-color: var(--go3d-green); color: var(--go3d-green); }
+.go3d-toast-error   { border-color: var(--go3d-danger); color: #ff6b63; }
+.go3d-toast-info    { border-color: var(--go3d-cyan); color: var(--go3d-cyan); }

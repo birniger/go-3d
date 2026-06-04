@@ -68,8 +68,8 @@ export class MultiplayerController {
 
   connect(): void {
     const key = Config.pusherKey;
-    if (!key) {
-      console.warn('Go3D: Pusher key not configured — real-time disabled, using polling fallback.');
+    if (!key || typeof Pusher === 'undefined') {
+      console.warn('Go3D: Pusher unavailable (no key or script not loaded) — using polling fallback.');
       this.startPolling();
       return;
     }
@@ -101,24 +101,28 @@ export class MultiplayerController {
 
   // ── Move submission ───────────────────────────────────────────────────────
 
-  async submitPlace(x: number, y: number, z: number): Promise<void> {
+  async submitPlace(x: number, y: number, z: number): Promise<MovePayload | null> {
     const elapsed = this.gameState.time_control !== 'none' ? Date.now() - this.lastTickAt : undefined;
     try {
-      await Games.move(this.gameState.id, { type: 'place', x, y, z, time_ms: elapsed });
-      // The server's response is authoritative; Pusher will deliver the move
-      // to the opponent. We update our own clock locally.
+      const res = await Games.move(this.gameState.id, { type: 'place', x, y, z, time_ms: elapsed });
+      // The server's response is authoritative; Pusher delivers the move to the
+      // opponent. We update our own clock locally and return the payload so the
+      // caller can apply our own move immediately (some Pusher setups don't
+      // echo events back to the originating socket).
       this.advanceClock(this.mySlot, elapsed ?? 0);
+      return res.event === 'move' ? (res.payload as MovePayload) : null;
     } catch (e) {
       this.callbacks.onError(e instanceof ApiError ? e.message : 'Move failed.');
       throw e;
     }
   }
 
-  async submitPass(): Promise<void> {
+  async submitPass(): Promise<MovePayload | null> {
     const elapsed = this.gameState.time_control !== 'none' ? Date.now() - this.lastTickAt : undefined;
     try {
-      await Games.move(this.gameState.id, { type: 'pass', time_ms: elapsed });
+      const res = await Games.move(this.gameState.id, { type: 'pass', time_ms: elapsed });
       this.advanceClock(this.mySlot, elapsed ?? 0);
+      return res.event === 'move' ? (res.payload as MovePayload) : null;
     } catch (e) {
       this.callbacks.onError(e instanceof ApiError ? e.message : 'Pass failed.');
       throw e;

@@ -23,12 +23,19 @@ class Go3D_Game_Logic {
                array_fill( 0, $this->size, 0 ) ) );
     }
 
-    /** Rebuild a board by replaying an ordered list of move rows from the DB. */
-    public static function replay( int $size, array $moves ): self {
+    /**
+     * Rebuild a board by replaying an ordered list of move rows from the DB.
+     *
+     * Stone colour is derived from the game's player1_id (Black = slot 1,
+     * White = slot 2), NOT from player_id parity — parity is meaningless
+     * because user IDs are arbitrary.
+     */
+    public static function replay( int $size, array $moves, int $player1_id ): self {
         $logic = new self( $size );
         foreach ( $moves as $m ) {
             if ( $m['type'] === 'place' ) {
-                $logic->place( (int)$m['x'], (int)$m['y'], (int)$m['z'], (int)$m['player_id'] % 2 === 1 ? 1 : 2 );
+                $slot = ( (int)$m['player_id'] === $player1_id ) ? 1 : 2;
+                $logic->place( (int)$m['x'], (int)$m['y'], (int)$m['z'], $slot );
             }
             // pass/resign don't affect board
         }
@@ -92,7 +99,9 @@ class Go3D_Game_Logic {
             for ( $y = 0; $y < $this->size; $y++ )
                 for ( $z = 0; $z < $this->size; $z++ )
                     $flat[] = $this->board[$x][$y][$z];
-        return implode( '', $flat );
+        // md5 keeps the stored hash a fixed 32 chars — a raw implode would be
+        // size³ chars (729 for 9³) and overflow the board_hash VARCHAR(512).
+        return md5( implode( '', $flat ) );
     }
 
     // ── Place ────────────────────────────────────────────────────────────────
@@ -149,12 +158,21 @@ class Go3D_Game_Logic {
 
     // ── Territory counting ───────────────────────────────────────────────────
 
-    /** @return array{black:int,white:int,neutral:int,map:array} */
+    /** @return array{black:int,white:int,neutral:int,blackStones:int,whiteStones:int,map:array} */
     public function count_territory(): array {
         $s     = $this->size;
         $seen  = [];
         $black = 0; $white = 0; $neutral = 0;
+        $blackStones = 0; $whiteStones = 0;
         $map   = [];
+
+        // Count stones currently on the board (needed for Chinese area scoring).
+        for ( $x = 0; $x < $s; $x++ )
+            for ( $y = 0; $y < $s; $y++ )
+                for ( $z = 0; $z < $s; $z++ ) {
+                    if      ( $this->board[$x][$y][$z] === 1 ) $blackStones++;
+                    elseif  ( $this->board[$x][$y][$z] === 2 ) $whiteStones++;
+                }
 
         for ( $x = 0; $x < $s; $x++ ) {
             for ( $y = 0; $y < $s; $y++ ) {
@@ -187,7 +205,14 @@ class Go3D_Game_Logic {
                 }
             }
         }
-        return [ 'black' => $black, 'white' => $white, 'neutral' => $neutral, 'map' => $map ];
+        return [
+            'black'       => $black,
+            'white'       => $white,
+            'neutral'     => $neutral,
+            'blackStones' => $blackStones,
+            'whiteStones' => $whiteStones,
+            'map'         => $map,
+        ];
     }
 
     private function deep_copy(): array {
