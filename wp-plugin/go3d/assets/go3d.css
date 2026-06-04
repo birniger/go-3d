@@ -3,6 +3,7 @@
  * Scoped under #go3d-root so they don't bleed into the host WordPress theme.
  * Cyberpunk palette: near-black bg, cyan/magenta accents, mono type.
  */
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@500;700;900&display=swap');
 
 #go3d-root {
   --go3d-bg:      #05060a;
@@ -15,9 +16,12 @@
   --go3d-green:   #19f5a0;
   --go3d-danger:  #ff3b30;
 
+  --go3d-font: "Share Tech Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --go3d-display: "Orbitron", var(--go3d-font);
+
   position: relative;
   color: var(--go3d-text);
-  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  font-family: var(--go3d-font);
   font-size: 15px;
   line-height: 1.45;
 }
@@ -350,3 +354,157 @@
 .go3d-toast-success { border-color: var(--go3d-green); color: var(--go3d-green); }
 .go3d-toast-error   { border-color: var(--go3d-danger); color: #ff6b63; }
 .go3d-toast-info    { border-color: var(--go3d-cyan); color: var(--go3d-cyan); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   MAX CYBERPUNK LAYER — CRT overlay, glitch wordmark, HUD chrome.
+   Everything here is cosmetic and scoped under #go3d-root.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Display type for headings, logo, turn label, clocks. */
+.go3d-logo,
+.go3d-standalone-header .go3d-logo,
+.go3d-turn-label,
+.go3d-form h2,
+.go3d-panel h3,
+.go3d-onboarding-card h3 { font-family: var(--go3d-display); }
+
+/* ── CRT scanlines + vignette ──────────────────────────────────────────────
+   Scoped to the in-game screen (a fixed, pointer-events:none layer) so the
+   overlay never bleeds onto the host WordPress page. Rides above the WebGL
+   canvas (z 1); its pseudo-elements paint over the scene but pass clicks
+   through to the HUD beneath. */
+#go3d-game-screen::after {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 9000;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0) 0px,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 12, 18, 0.32) 3px,
+      rgba(0, 12, 18, 0.32) 4px),
+    radial-gradient(ellipse at center,
+      rgba(0, 0, 0, 0) 55%,
+      rgba(0, 4, 10, 0.55) 100%);
+  mix-blend-mode: multiply;
+  animation: go3d-scan 7s linear infinite;
+}
+/* Thin travelling scan-bar for extra life. */
+#go3d-game-screen::before {
+  content: "";
+  position: fixed; left: 0; right: 0; height: 28vh;
+  top: -28vh;
+  pointer-events: none;
+  z-index: 9001;
+  background: linear-gradient(180deg,
+    rgba(0, 229, 255, 0) 0%,
+    rgba(0, 229, 255, 0.05) 50%,
+    rgba(0, 229, 255, 0) 100%);
+  animation: go3d-scanbar 6.5s linear infinite;
+}
+@keyframes go3d-scan      { from { background-position: 0 0, 0 0; } to { background-position: 0 -4px, 0 0; } }
+@keyframes go3d-scanbar   { 0% { top: -28vh; } 100% { top: 100vh; } }
+@media (prefers-reduced-motion: reduce) {
+  #go3d-game-screen::before { display: none; }
+  #go3d-game-screen::after  { animation: none; }
+}
+
+/* ── Glitch wordmark ───────────────────────────────────────────────────────
+   RGB-split + occasional jitter on the Go³D logo. */
+.go3d-logo {
+  position: relative;
+  text-shadow:
+    0 0 12px rgba(0, 229, 255, 0.55),
+    -2px 0 var(--go3d-magenta),
+    2px 0 var(--go3d-cyan);
+  animation: go3d-glitch 4.2s steps(1) infinite;
+}
+@keyframes go3d-glitch {
+  0%, 92%, 100% { transform: translate(0, 0); clip-path: none; }
+  93%  { transform: translate(-2px, 1px); text-shadow: 2px 0 var(--go3d-magenta), -2px 0 var(--go3d-cyan); }
+  95%  { transform: translate(2px, -1px); text-shadow: -3px 0 var(--go3d-cyan), 3px 0 var(--go3d-magenta); }
+  97%  { transform: translate(-1px, 0); }
+}
+
+/* ── HUD chrome: chamfered neon buttons ────────────────────────────────────
+   Angled "cut corner" silhouette + sweep on hover. */
+.go3d-btn-primary,
+.go3d-btn-ghost {
+  position: relative;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.go3d-btn-ghost {
+  background: rgba(7, 12, 20, 0.55);
+  border-color: rgba(0, 229, 255, 0.28);
+  overflow: hidden;
+}
+.go3d-btn-ghost::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(120deg, transparent 0%, rgba(0, 229, 255, 0.22) 50%, transparent 100%);
+  transform: translateX(-120%);
+  transition: transform 0.45s ease;
+}
+.go3d-btn-ghost:hover {
+  border-color: var(--go3d-cyan); color: var(--go3d-cyan);
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.4), inset 0 0 8px rgba(0, 229, 255, 0.12);
+}
+.go3d-btn-ghost:hover::after { transform: translateX(120%); }
+.go3d-btn-primary {
+  box-shadow: 0 0 14px rgba(0, 229, 255, 0.45);
+}
+.go3d-btn-danger:hover { box-shadow: 0 0 10px rgba(255, 59, 48, 0.5); }
+
+/* ── HUD panels: animated gradient frame ───────────────────────────────────
+   A conic neon border sweeping around setup/onboarding panels. */
+.go3d-local-setup-panel,
+.go3d-onboarding-card {
+  position: relative;
+  background:
+    linear-gradient(var(--go3d-panel), var(--go3d-panel)) padding-box,
+    conic-gradient(from var(--go3d-ang, 0deg),
+      var(--go3d-cyan), var(--go3d-magenta), var(--go3d-green), var(--go3d-cyan)) border-box;
+  border: 1px solid transparent;
+  animation: go3d-frame 6s linear infinite;
+}
+@property --go3d-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes go3d-frame { to { --go3d-ang: 360deg; } }
+
+/* ── Topbar: animated neon underline ───────────────────────────────────────*/
+#go3d-game-topbar {
+  border-bottom: 1px solid rgba(0, 229, 255, 0.18);
+  background:
+    linear-gradient(180deg, rgba(5,6,10,0.94), rgba(5,6,10,0)),
+    linear-gradient(90deg, transparent, rgba(0,229,255,0.5), rgba(255,0,119,0.5), transparent) bottom/200% 1px no-repeat;
+  animation: go3d-topglow 5s linear infinite;
+}
+@keyframes go3d-topglow { 0% { background-position: top, -100% bottom; } 100% { background-position: top, 100% bottom; } }
+
+/* ── Turn indicator: neon pulse ────────────────────────────────────────────*/
+.go3d-turn-label {
+  text-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+  animation: go3d-turnpulse 1.8s ease-in-out infinite;
+}
+@keyframes go3d-turnpulse {
+  0%, 100% { opacity: 0.78; text-shadow: 0 0 6px rgba(0, 229, 255, 0.45); }
+  50%      { opacity: 1;    text-shadow: 0 0 16px rgba(0, 229, 255, 0.9); }
+}
+
+/* ── Clocks: digital readout glow ──────────────────────────────────────────*/
+.go3d-clock { font-family: var(--go3d-display); letter-spacing: 0.04em; }
+.go3d-clock-active { text-shadow: 0 0 10px rgba(0, 229, 255, 0.7); }
+.go3d-clock-urgent { text-shadow: 0 0 10px rgba(255, 204, 0, 0.7); }
+
+/* ── HUD control clusters: glassy neon ─────────────────────────────────────*/
+.go3d-vc-group,
+#go3d-layer-banner,
+#go3d-replay-bar {
+  backdrop-filter: blur(4px);
+  border-color: rgba(0, 229, 255, 0.22);
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.5), inset 0 0 10px rgba(0, 229, 255, 0.05);
+}
+#go3d-layer-banner { text-shadow: 0 0 8px rgba(0, 229, 255, 0.55); }

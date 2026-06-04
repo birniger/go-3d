@@ -170,17 +170,41 @@ export class Renderer {
   private boundingBox!: THREE.LineSegments;
   private particles!: THREE.Points;
 
-  // ── Void FX: neon comet-streaks drifting through the empty space around the
-  // board. Kept on the camera-facing hemisphere so they never sit behind the
-  // cube from the player's viewpoint. Geometry is preallocated; only the
-  // position/colour buffers mutate per frame.
-  private readonly STREAK_N = 34;
+  // ── Void FX: a "containment field" of motion hugging the board. Everything is
+  // preallocated; only buffers/transforms mutate per frame. Streaks stay on the
+  // camera-facing hemisphere so they never sit behind the cube.
+  private readonly STREAK_N = 46;
   private streaks!: THREE.LineSegments;
   private streakPos!: Float32Array;   // STREAK_N * 2 verts * 3
   private streakCol!: Float32Array;
-  private streakState: { p: THREE.Vector3; v: THREE.Vector3; life: number; max: number; r: number; g: number; b: number }[] = [];
+  private streakState: { p: THREE.Vector3; v: THREE.Vector3; a: THREE.Vector3; life: number; max: number; r: number; g: number; b: number }[] = [];
   private _camDir = new THREE.Vector3();
   private _streakTail = new THREE.Vector3();
+  private _tmpV = new THREE.Vector3();
+
+  // Containment rings hugging the cube — tilted neon loops that rotate + pulse.
+  private rings: { mesh: THREE.LineLoop; axis: THREE.Vector3; spin: number; phase: number; baseOp: number; mat: THREE.LineBasicMaterial }[] = [];
+
+  // Scan-sweep plane that periodically passes through the cube.
+  private scanPlane!: THREE.Mesh;
+  private scanMat!: THREE.MeshBasicMaterial;
+  private scanPhase = -40;            // <0 = cooldown countdown, 0..1 = active sweep
+  private scanAxis = 1;
+
+  // Glyph satellites orbiting close to the cube, flickering.
+  private readonly GLYPH_N = 16;
+  private glyphs: { spr: THREE.Sprite; r: number; speed: number; phase: number; tilt: number; flick: number; baseHue: number }[] = [];
+  private glyphTextures: THREE.Texture[] = [];
+
+  // Electric arcs that crackle between two random board nodes.
+  private readonly ARC_SEGS = 12;
+  private arc!: THREE.Line;
+  private arcMat!: THREE.LineBasicMaterial;
+  private arcPos!: Float32Array;
+  private arcLife = -1;               // <0 = idle (cooldown), else frames alive
+  private arcCooldown = 90;
+  private arcFrom = new THREE.Vector3();
+  private arcTo = new THREE.Vector3();
 
   // DOM
   private coordTip!: HTMLElement;
@@ -439,8 +463,10 @@ export class Renderer {
     this.scene.add(this.particles);
   }
 
-  // Neon comet-streaks zipping through the void around the board.
+  // A "containment field" of motion around the board: comet-streaks, orbiting
+  // rings, a scan-sweep plane, glyph satellites, and crackling arcs.
   private initVoidFX() {
+    // — Comet-streaks —
     this.streakPos = new Float32Array(this.STREAK_N * 2 * 3);
     this.streakCol = new Float32Array(this.STREAK_N * 2 * 3);
     const geo = new THREE.BufferGeometry();
@@ -455,38 +481,152 @@ export class Renderer {
     this.streaks.frustumCulled = false;
     this.scene.add(this.streaks);
     for (let i = 0; i < this.STREAK_N; i++) {
-      this.streakState.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), life: 0, max: 1, r: 0, g: 0, b: 0 });
-      this.spawnStreak(i, Math.random() * 80);   // stagger initial lives
+      this.streakState.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), a: new THREE.Vector3(), life: 0, max: 1, r: 0, g: 0, b: 0 });
+      this.spawnStreak(i, Math.random() * 90);   // stagger initial lives
+    }
+
+    this.initRings();
+    this.initScanPlane();
+    this.initGlyphs();
+    this.initArc();
+  }
+
+  private ringPalette = [0x00e5ff, 0xff0077, 0x1affa0];
+
+  /** Tilted neon loops that hug the cube and rotate on their own axes. */
+  private initRings() {
+    const ext = (this.game.size - 1) / 2;
+    const SEG = 96;
+    const radii = [ext * 1.18, ext * 1.38, ext * 1.6];
+    for (let r = 0; r < radii.length; r++) {
+      const pts: number[] = [];
+      for (let i = 0; i < SEG; i++) {
+        const a = (i / SEG) * Math.PI * 2;
+        pts.push(Math.cos(a) * radii[r], Math.sin(a) * radii[r], 0);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      const mat = new THREE.LineBasicMaterial({
+        color: this.ringPalette[r % 3], transparent: true, opacity: 0.5,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const mesh = new THREE.LineLoop(g, mat);
+      mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      const axis = new THREE.Vector3(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1).normalize();
+      this.rings.push({ mesh, axis, spin: (0.0025 + Math.random()*0.004) * (r % 2 ? -1 : 1), phase: Math.random()*6, baseOp: 0.42 - r*0.06, mat });
     }
   }
 
-  /** (Re)spawn streak i somewhere on the camera-facing hemisphere, in the
-   *  peripheral void (not straight over the board, never behind the cube). */
+  /** Translucent plane that periodically sweeps through the cube, CT-scan style. */
+  private initScanPlane() {
+    const span = (this.game.size + 1);
+    // Canvas texture: a bright central band fading to the edges.
+    const cv = document.createElement('canvas'); cv.width = 8; cv.height = 64;
+    const ctx = cv.getContext('2d')!;
+    const grad = ctx.createLinearGradient(0, 0, 0, 64);
+    grad.addColorStop(0, 'rgba(0,229,255,0)');
+    grad.addColorStop(0.46, 'rgba(0,229,255,0.15)');
+    grad.addColorStop(0.5, 'rgba(180,255,255,0.95)');
+    grad.addColorStop(0.54, 'rgba(0,229,255,0.15)');
+    grad.addColorStop(1, 'rgba(0,229,255,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, 8, 64);
+    const tex = new THREE.CanvasTexture(cv);
+    this.scanMat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.scanPlane = new THREE.Mesh(new THREE.PlaneGeometry(span, span), this.scanMat);
+    this.scanPlane.visible = false;
+    this.scanPlane.frustumCulled = false;
+    this.scene.add(this.scanPlane);
+  }
+
+  private glyphChars = ['ｱ','ﾂ','ﾈ','ﾜ','ﾔ','0','1','7','◇','#','>','零','弐','囲'];
+  private glyphHues = [0x00e5ff, 0xff0077, 0x1affa0];
+
+  /** Small flickering glyph sprites orbiting close to the cube. */
+  private initGlyphs() {
+    // Build a few glyph textures once and reuse them.
+    for (const ch of this.glyphChars) {
+      const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+      const ctx = cv.getContext('2d')!;
+      ctx.clearRect(0, 0, 64, 64);
+      ctx.font = 'bold 44px "Share Tech Mono", monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 8;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(ch, 32, 34);
+      const tex = new THREE.CanvasTexture(cv);
+      this.glyphTextures.push(tex);
+    }
+    const ext = (this.game.size - 1) / 2;
+    for (let i = 0; i < this.GLYPH_N; i++) {
+      const hue = this.glyphHues[i % this.glyphHues.length];
+      const mat = new THREE.SpriteMaterial({
+        map: this.glyphTextures[(Math.random() * this.glyphTextures.length) | 0],
+        color: hue, transparent: true, opacity: 0.9,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const spr = new THREE.Sprite(mat);
+      const sc = 0.5 + Math.random() * 0.5;
+      spr.scale.set(sc, sc, sc);
+      spr.frustumCulled = false;
+      this.scene.add(spr);
+      this.glyphs.push({
+        spr, r: ext * (1.12 + Math.random() * 0.7),
+        speed: (0.006 + Math.random() * 0.012) * (Math.random() < 0.5 ? 1 : -1),
+        phase: Math.random() * Math.PI * 2, tilt: Math.random() * Math.PI,
+        flick: Math.random() * Math.PI * 2, baseHue: hue,
+      });
+    }
+  }
+
+  /** A reusable jagged "lightning" line that fires between two board nodes. */
+  private initArc() {
+    this.arcPos = new Float32Array((this.ARC_SEGS + 1) * 3);
+    const g = new THREE.BufferGeometry();
+    const a = new THREE.BufferAttribute(this.arcPos, 3); a.setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('position', a);
+    this.arcMat = new THREE.LineBasicMaterial({
+      color: 0xaef6ff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.arc = new THREE.Line(g, this.arcMat);
+    this.arc.visible = false;
+    this.arc.frustumCulled = false;
+    this.scene.add(this.arc);
+  }
+
+  /** (Re)spawn streak i on the camera-facing hemisphere, hugging the board
+   *  (never behind the cube). Now closer, with a slight curve toward orbit. */
   private spawnStreak(i: number, lifeOffset = 0) {
     const s = this.streakState[i];
     const size = this.game.size;
-    // Camera direction from the board centre (board is centred at the origin).
     this._camDir.copy(this.camera.position).normalize();
     if (this._camDir.lengthSq() < 1e-4) this._camDir.set(1, 0.6, 1).normalize();
-    // Random direction, pulled onto the front hemisphere but kept off-axis so
-    // streaks live in the surrounding void rather than over the board centre.
-    const d = new THREE.Vector3(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
+    const d = this._tmpV.set(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
     if (d.lengthSq() < 1e-3) d.set(0, 1, 0);
     d.normalize();
     let dot = d.dot(this._camDir);
     if (dot < 0) { d.addScaledVector(this._camDir, -2 * dot); d.normalize(); dot = d.dot(this._camDir); }
-    if (dot > 0.7) { d.addScaledVector(this._camDir, -(dot - 0.45)); d.normalize(); }   // push off the camera axis
-    const radius = size * (1.7 + Math.random() * 1.9);
+    if (dot > 0.7) { d.addScaledVector(this._camDir, -(dot - 0.45)); d.normalize(); }
+    // Closer to the cube than before: hug the board instead of the far void.
+    const radius = size * (1.02 + Math.random() * 1.5);
     s.p.copy(d).multiplyScalar(radius);
-    // Velocity: mostly tangential so the streak skates across the view.
     const tang = new THREE.Vector3().crossVectors(d, this._camDir);
     if (tang.lengthSq() < 1e-3) tang.set(1, 0, 0);
     tang.normalize();
-    const speed = size * (0.05 + Math.random() * 0.08);
+    // Two speed classes: quick darts and lazy drifters.
+    const fast = Math.random() < 0.4;
+    const speed = size * (fast ? 0.10 + Math.random()*0.09 : 0.035 + Math.random()*0.05);
     s.v.copy(tang).multiplyScalar(speed * (Math.random() < 0.5 ? 1 : -1));
-    s.v.addScaledVector(d, size * (Math.random() - 0.5) * 0.02);   // slight radial wander
+    s.v.addScaledVector(d, size * (Math.random() - 0.5) * 0.015);
+    // Curve: gentle centripetal pull so paths bend/orbit around the cube.
+    s.a.copy(d).multiplyScalar(-size * 0.0006);
     s.life = -lifeOffset;
-    s.max = 70 + Math.random() * 90;
+    s.max = fast ? 50 + Math.random()*40 : 90 + Math.random()*110;
     const roll = Math.random();
     if (roll < 0.5)      { s.r = 0.0; s.g = 0.9; s.b = 1.0; }   // cyan
     else if (roll < 0.85){ s.r = 1.0; s.g = 0.0; s.b = 0.47; }  // pink
@@ -495,32 +635,106 @@ export class Renderer {
 
   private updateVoidFX() {
     this._camDir.copy(this.camera.position).normalize();
-    const size = this.game.size;
+    const size = this.game.size, ext = (size - 1) / 2;
     const backLimit = -0.12, maxR = size * 4.2;
+
+    // — Comet-streaks (closer + curving, longer brighter tails) —
     for (let i = 0; i < this.STREAK_N; i++) {
       const s = this.streakState[i];
       s.life++;
-      if (s.life >= 0) s.p.addScaledVector(s.v, 1);
-      // Respawn when the streak dies, drifts behind the cube, or flies too far.
+      if (s.life >= 0) { s.v.addScaledVector(s.a, 1); s.p.addScaledVector(s.v, 1); }
       if (s.life > s.max || s.p.dot(this._camDir) < backLimit * s.p.length() || s.p.length() > maxR) {
         this.spawnStreak(i);
       }
-      // Comet trail: tail trails behind the head along velocity.
-      this._streakTail.copy(s.p).addScaledVector(s.v, -5.5);
-      // Brightness envelope: fade in, hold, fade out.
+      this._streakTail.copy(s.p).addScaledVector(s.v, -8.5);   // longer trail
       const t = s.life < 0 ? 0 : s.life / s.max;
       const env = Math.max(0, Math.sin(Math.PI * Math.min(1, Math.max(0, t))));
-      const hi = 0.18 + 0.82 * env;
+      const hi = 0.22 + 1.05 * env;                            // brighter
       const o = i * 6;
-      // Head vertex — bright.
       this.streakPos[o]   = s.p.x; this.streakPos[o+1] = s.p.y; this.streakPos[o+2] = s.p.z;
       this.streakCol[o]   = s.r * hi; this.streakCol[o+1] = s.g * hi; this.streakCol[o+2] = s.b * hi;
-      // Tail vertex — dimmer, for a comet gradient.
       this.streakPos[o+3] = this._streakTail.x; this.streakPos[o+4] = this._streakTail.y; this.streakPos[o+5] = this._streakTail.z;
-      this.streakCol[o+3] = s.r * hi * 0.05; this.streakCol[o+4] = s.g * hi * 0.05; this.streakCol[o+5] = s.b * hi * 0.05;
+      this.streakCol[o+3] = s.r * hi * 0.04; this.streakCol[o+4] = s.g * hi * 0.04; this.streakCol[o+5] = s.b * hi * 0.04;
     }
     (this.streaks.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
     (this.streaks.geometry.attributes['color'] as THREE.BufferAttribute).needsUpdate = true;
+
+    // — Containment rings —
+    for (const ring of this.rings) {
+      ring.mesh.rotateOnAxis(ring.axis, ring.spin);
+      ring.phase += 0.04;
+      ring.mat.opacity = ring.baseOp + 0.18 * Math.sin(ring.phase);
+    }
+
+    // — Scan sweep —
+    if (this.scanPhase < 0) {
+      this.scanPhase += 1;
+      if (this.scanPhase >= 0) {                       // begin a fresh sweep
+        this.scanPhase = 0;
+        this.scanAxis = (Math.random() * 3) | 0;
+        const hue = this.ringPalette[(Math.random() * 3) | 0];
+        this.scanMat.color.setHex(hue);
+        this.scanPlane.visible = true;
+        this.scanPlane.rotation.set(0, 0, 0);
+        if (this.scanAxis === 0) this.scanPlane.rotation.y = Math.PI / 2;       // sweep along X
+        else if (this.scanAxis === 2) this.scanPlane.rotation.x = Math.PI / 2;  // sweep along Z
+      }
+    } else {
+      this.scanPhase += 0.012;
+      const u = this.scanPhase;                        // 0..1 across the cube
+      const pos = (u * 2 - 1) * (ext + 0.6);
+      if (this.scanAxis === 0) this.scanPlane.position.set(pos, 0, 0);
+      else if (this.scanAxis === 1) this.scanPlane.position.set(0, pos, 0);
+      else this.scanPlane.position.set(0, 0, pos);
+      this.scanMat.opacity = 0.55 * Math.sin(Math.PI * Math.min(1, u));
+      if (u >= 1) { this.scanPhase = -(160 + Math.random()*240); this.scanPlane.visible = false; }
+    }
+
+    // — Glyph satellites —
+    for (const gl of this.glyphs) {
+      gl.phase += gl.speed;
+      gl.flick += 0.3;
+      const ct = Math.cos(gl.tilt), st = Math.sin(gl.tilt);
+      const x = Math.cos(gl.phase) * gl.r;
+      const y = Math.sin(gl.phase) * gl.r * 0.65;
+      // tilt the orbit plane around X so they don't all share one ring
+      gl.spr.position.set(x, y * ct, y * st);
+      const flick = 0.45 + 0.55 * Math.abs(Math.sin(gl.flick * 1.7));
+      (gl.spr.material as THREE.SpriteMaterial).opacity =
+        gl.spr.position.dot(this._camDir) < -0.1 * gl.r ? 0 : flick;   // hide when behind cube
+    }
+
+    // — Electric arcs —
+    if (this.arcLife < 0) {
+      this.arcCooldown -= 1;
+      if (this.arcCooldown <= 0) {
+        // Pick two random board nodes and fire.
+        const rnd = () => this.coord((Math.random() * size) | 0);
+        this.arcFrom.set(rnd(), rnd(), rnd());
+        this.arcTo.set(rnd(), rnd(), rnd());
+        this.arcLife = 0;
+        this.arc.visible = true;
+        this.arcMat.color.setHex(Math.random() < 0.5 ? 0xaef6ff : 0xff6ac8);
+      }
+    } else {
+      this.arcLife += 1;
+      // Re-jitter the bolt every frame for a crackle.
+      for (let j = 0; j <= this.ARC_SEGS; j++) {
+        const f = j / this.ARC_SEGS;
+        const jx = j === 0 || j === this.ARC_SEGS ? 0 : (Math.random()-0.5) * 0.5;
+        const jy = j === 0 || j === this.ARC_SEGS ? 0 : (Math.random()-0.5) * 0.5;
+        const jz = j === 0 || j === this.ARC_SEGS ? 0 : (Math.random()-0.5) * 0.5;
+        this.arcPos[j*3]   = this.arcFrom.x + (this.arcTo.x - this.arcFrom.x) * f + jx;
+        this.arcPos[j*3+1] = this.arcFrom.y + (this.arcTo.y - this.arcFrom.y) * f + jy;
+        this.arcPos[j*3+2] = this.arcFrom.z + (this.arcTo.z - this.arcFrom.z) * f + jz;
+      }
+      (this.arc.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
+      this.arcMat.opacity = Math.max(0, Math.sin(Math.PI * (this.arcLife / 14)));
+      if (this.arcLife >= 14) {
+        this.arcLife = -1; this.arc.visible = false;
+        this.arcCooldown = 80 + (Math.random() * 200 | 0);
+      }
+    }
   }
 
   // ── Stones ────────────────────────────────────────────────────────────────
