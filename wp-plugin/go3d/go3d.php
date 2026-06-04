@@ -21,6 +21,8 @@ foreach ( [
     'class-jwt',
     'class-auth',
     'class-game-logic',
+    'class-geodesic',
+    'class-graph-logic',
     'class-game',
     'class-elo',
     'class-pusher',

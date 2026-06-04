@@ -6,6 +6,10 @@ if ( ! defined( 'ABSPATH' ) ) exit;
  */
 class Go3D_Game {
 
+    /** Geodesic subdivision frequency bounds for sphere mode (board_size column). */
+    const SPHERE_FREQ_MIN = 2;
+    const SPHERE_FREQ_MAX = 8;
+
     // ── Create / join ─────────────────────────────────────────────────────────
 
     /**
@@ -17,8 +21,14 @@ class Go3D_Game {
         global $wpdb;
         $t = $wpdb->prefix . 'go3d_games';
 
-        $board_size   = in_array( (int)($settings['board_size']   ?? 9), [4,5,7,9,13], true ) ? (int)$settings['board_size']   : 9;
         $mode         = in_array( $settings['mode'] ?? '', ['cube','stack','sphere'], true ) ? $settings['mode'] : 'cube';
+        if ( $mode === 'sphere' ) {
+            // Sphere games store the geodesic subdivision FREQUENCY in board_size.
+            // Presets are 2/3/4 (42/92/162 points); custom is clamped to 2–8.
+            $board_size = max( self::SPHERE_FREQ_MIN, min( self::SPHERE_FREQ_MAX, (int)( $settings['board_size'] ?? 3 ) ) );
+        } else {
+            $board_size = in_array( (int)( $settings['board_size'] ?? 9 ), [4,5,7,9,13], true ) ? (int)$settings['board_size'] : 9;
+        }
         $scoring_mode = in_array( $settings['scoring_mode'] ?? '', ['chinese','japanese'],      true ) ? $settings['scoring_mode']      : 'chinese';
         $komi         = (float)( $settings['komi']         ?? 6.5 );
         $time_control = in_array( $settings['time_control'] ?? '', ['none','absolute','byoyomi','fischer'], true ) ? $settings['time_control'] : 'none';
@@ -44,8 +54,12 @@ class Go3D_Game {
             $p2_time_ms = $main;
         }
 
-        $empty_logic = new Go3D_Game_Logic( $board_size );
-        $hash        = $empty_logic->hash();
+        if ( $mode === 'sphere' ) {
+            $empty_logic = new Go3D_Graph_Logic( Go3D_Geodesic::adjacency( $board_size ) );
+        } else {
+            $empty_logic = new Go3D_Game_Logic( $board_size );
+        }
+        $hash = $empty_logic->hash();
 
         $wpdb->insert( $t, [
             'player1_id'       => $player1_id,
@@ -260,6 +274,12 @@ class Go3D_Game {
         $gt = $wpdb->prefix . 'go3d_games';
         $mt = $wpdb->prefix . 'go3d_moves';
 
+        // Sphere mode plays on a geodesic graph: a single node index (stored in
+        // the x column, y/z null) and the graph rule engine.
+        if ( ( $game['mode'] ?? 'cube' ) === 'sphere' ) {
+            return self::handle_place_sphere( $game, $user_id, $player_slot, $move_data, $time_ms, $p1_time_ms, $p2_time_ms );
+        }
+
         $x = isset( $move_data['x'] ) ? (int)$move_data['x'] : -1;
         $y = isset( $move_data['y'] ) ? (int)$move_data['y'] : -1;
         $z = isset( $move_data['z'] ) ? (int)$move_data['z'] : -1;
@@ -333,6 +353,72 @@ class Go3D_Game {
         return [ 'ok' => true, 'event' => 'move', 'payload' => $payload ];
     }
 
+    /**
+     * Place a stone in SPHERE mode (geodesic graph). The move carries a single
+     * node index in $move_data['x']; y/z are unused. Captures are returned as a
+     * flat list of node indices.
+     */
+    private static function handle_place_sphere( array $game, int $user_id, int $player_slot, array $move_data, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms ): array {
+        global $wpdb;
+        $gt = $wpdb->prefix . 'go3d_games';
+        $mt = $wpdb->prefix . 'go3d_moves';
+
+        $node = isset( $move_data['x'] ) ? (int)$move_data['x'] : -1;
+
+        $adj   = Go3D_Geodesic::adjacency( (int)$game['board_size'] );
+        $moves = self::get_moves( (int)$game['id'] );
+        $logic = Go3D_Graph_Logic::replay( $adj, $moves, (int)$game['player1_id'] );
+
+        $history = json_decode( $game['history_hashes'] ?? '[]', true ) ?: [];
+
+        $result = $logic->place( $node, $player_slot, $history );
+        if ( ! $result['ok'] ) {
+            return [ 'ok' => false, 'error' => $result['reason'], 'code' => 422 ];
+        }
+
+        $move_number = self::next_move_number( (int)$game['id'] );
+        $history[]   = $result['hash'];
+
+        $inserted = $wpdb->insert( $mt, [
+            'game_id'     => $game['id'],
+            'move_number' => $move_number,
+            'player_id'   => $user_id,
+            'type'        => 'place',
+            'x'           => $node,   // node index; y/z stay null for sphere
+            'time_ms'     => $time_ms,
+            'created_at'  => current_time( 'mysql', true ),
+        ] );
+        if ( false === $inserted ) {
+            return [ 'ok' => false, 'error' => 'Move already registered. Please retry.', 'code' => 409 ];
+        }
+
+        $next_player = 3 - $player_slot;
+
+        $wpdb->update( $gt, [
+            'consecutive_passes' => 0,
+            'current_player'     => $next_player,
+            'board_hash'         => $result['hash'],
+            'history_hashes'     => wp_json_encode( $history ),
+            'p1_time_ms'         => $p1_time_ms,
+            'p2_time_ms'         => $p2_time_ms,
+            'last_move_at'       => current_time( 'mysql', true ),
+        ], [ 'id' => $game['id'] ] );
+
+        $payload = [
+            'type'        => 'place',
+            'move_number' => $move_number,
+            'player_slot' => $player_slot,
+            'x'           => $node,
+            'captured'    => $result['captured'],   // flat node indices
+            'next_player' => $next_player,
+            'p1_time_ms'  => $p1_time_ms,
+            'p2_time_ms'  => $p2_time_ms,
+        ];
+        Go3D_Pusher::trigger( "private-game-{$game['id']}", 'move', $payload );
+
+        return [ 'ok' => true, 'event' => 'move', 'payload' => $payload ];
+    }
+
     // ── End game ──────────────────────────────────────────────────────────────
 
     /**
@@ -367,10 +453,15 @@ class Go3D_Game {
      * End game by double-pass → count territory.
      */
     private static function end_by_scoring( array $game, int $move_number, ?int $p1_time_ms, ?int $p2_time_ms ): array {
-        $moves   = self::get_moves( (int)$game['id'] );
-        $p1_id   = (int)$game['player1_id'];
-        $p2_id   = (int)$game['player2_id'];
-        $logic   = Go3D_Game_Logic::replay( (int)$game['board_size'], $moves, $p1_id );
+        $moves    = self::get_moves( (int)$game['id'] );
+        $p1_id    = (int)$game['player1_id'];
+        $p2_id    = (int)$game['player2_id'];
+        $is_sphere = ( $game['mode'] ?? 'cube' ) === 'sphere';
+        $adj       = $is_sphere ? Go3D_Geodesic::adjacency( (int)$game['board_size'] ) : null;
+
+        $logic   = $is_sphere
+            ? Go3D_Graph_Logic::replay( $adj, $moves, $p1_id )
+            : Go3D_Game_Logic::replay( (int)$game['board_size'], $moves, $p1_id );
         $terr    = $logic->count_territory();
         $komi    = (float)$game['komi'];
         $mode    = $game['scoring_mode'];
@@ -380,11 +471,13 @@ class Go3D_Game {
             // The DB doesn't store per-move capture counts, so replay the game
             // incrementally and tally captures by the capturing player's slot.
             $p1_captures = 0; $p2_captures = 0;
-            $logic2 = new Go3D_Game_Logic( (int)$game['board_size'] );
+            $logic2 = $is_sphere ? new Go3D_Graph_Logic( $adj ) : new Go3D_Game_Logic( (int)$game['board_size'] );
             foreach ( $moves as $m ) {
                 if ( $m['type'] !== 'place' ) continue;
                 $slot = ( (int)$m['player_id'] === $p1_id ) ? 1 : 2;
-                $r = $logic2->place( (int)$m['x'], (int)$m['y'], (int)$m['z'], $slot );
+                $r = $is_sphere
+                    ? $logic2->place( (int)$m['x'], $slot )
+                    : $logic2->place( (int)$m['x'], (int)$m['y'], (int)$m['z'], $slot );
                 if ( $r['ok'] ) {
                     $cap_count = count( $r['captured'] );
                     // A slot-1 (Black) move captures White's stones → adds to P1's prisoners.
@@ -500,8 +593,24 @@ class Go3D_Game {
         $game = self::get_row( $game_id );
         if ( ! $game ) return null;
 
-        $moves = self::get_moves( $game_id );
-        $logic = Go3D_Game_Logic::replay( (int)$game['board_size'], $moves, (int)$game['player1_id'] );
+        $moves    = self::get_moves( $game_id );
+        $is_sphere = ( $game['mode'] ?? 'cube' ) === 'sphere';
+
+        // Sphere games carry the geodesic geometry so the client can render the
+        // globe without regenerating the graph (the server is the single source
+        // of truth for both rules and rendering). board is a FLAT node array.
+        $geometry = null;
+        if ( $is_sphere ) {
+            $geo      = Go3D_Geodesic::build( (int)$game['board_size'] );
+            $logic    = Go3D_Graph_Logic::replay( $geo['adjacency'], $moves, (int)$game['player1_id'] );
+            $geometry = [
+                'vertices' => $geo['vertices'],
+                'edges'    => $geo['edges'],
+                'count'    => $geo['count'],
+            ];
+        } else {
+            $logic = Go3D_Game_Logic::replay( (int)$game['board_size'], $moves, (int)$game['player1_id'] );
+        }
 
         return [
             'id'                 => (int)$game['id'],
@@ -526,6 +635,7 @@ class Go3D_Game {
             'elo_change_p1'      => $game['elo_change_p1'] !== null ? (int)$game['elo_change_p1'] : null,
             'elo_change_p2'      => $game['elo_change_p2'] !== null ? (int)$game['elo_change_p2'] : null,
             'board'              => $logic->get_board(),
+            'geometry'           => $geometry,
             'moves'              => array_map( [ __CLASS__, 'sanitise_move' ], $moves ),
             'created_at'         => $game['created_at'],
             'last_move_at'       => $game['last_move_at'],
@@ -641,7 +751,13 @@ class Go3D_Game {
             'type'        => $m['type'],
             'created_at'  => $m['created_at'],
         ];
-        if ( $m['x'] !== null ) { $out['x'] = (int)$m['x']; $out['y'] = (int)$m['y']; $out['z'] = (int)$m['z']; }
+        // Cube/stack moves carry full x,y,z. Sphere moves carry only x (a node
+        // index); y/z are null and must stay absent rather than collapse to 0.
+        if ( $m['x'] !== null ) {
+            $out['x'] = (int)$m['x'];
+            if ( $m['y'] !== null ) $out['y'] = (int)$m['y'];
+            if ( $m['z'] !== null ) $out['z'] = (int)$m['z'];
+        }
         if ( $m['time_ms'] !== null ) $out['time_ms'] = (int)$m['time_ms'];
         return $out;
     }
