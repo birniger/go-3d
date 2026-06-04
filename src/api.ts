@@ -199,6 +199,9 @@ export const Auth = {
   verifyCode: (email: string, code: string) =>
     post<{ token: string; user: User }>('/auth/verify-code', { email, code }),
 
+  resendCode: (email: string) =>
+    post<{ message: string }>('/auth/resend-code', { email }),
+
   requestReset: (email: string) =>
     post<{ message: string }>('/auth/request-reset', { email }),
 

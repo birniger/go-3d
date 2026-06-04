@@ -23,6 +23,7 @@ import {
 import { GameController, LocalController, LocalGameConfig } from './local-controller';
 import { buildGeodesic } from './geodesic';
 import { showToast } from './lobby';
+import { music } from './music';
 
 // ── Controller factory ──────────────────────────────────────────────────────
 
@@ -235,6 +236,7 @@ export class GameSession {
     window.addEventListener('keydown', this.keyHandler);
     window.addEventListener('mousemove', this.mouseHandler);
     maybeShowOnboarding();
+    music.enterGame();
   }
 
   // ── Local actions ─────────────────────────────────────────────────────────
@@ -608,6 +610,7 @@ export class GameSession {
     resetViewControls();
     this.controller.disconnect();
     this.renderer.dispose();
+    music.leaveGame();
   }
 }
 
@@ -669,6 +672,7 @@ export class SphereGameSession {
     this.refreshTurnUI();
     setActiveGlow(this.currentTurn, this.finished);
     maybeShowOnboarding();
+    music.enterGame();
   }
 
   private get mySlot(): 1 | 2 { return this.controller.mySlot; }
@@ -870,5 +874,6 @@ export class SphereGameSession {
     resetViewControls();
     this.controller.disconnect();
     this.renderer.dispose();
+    music.leaveGame();
   }
 }

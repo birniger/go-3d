@@ -30,6 +30,12 @@ class Go3D_API_Auth {
             'permission_callback' => '__return_true',
         ] );
 
+        register_rest_route( $ns, '/auth/resend-code', [
+            'methods'             => 'POST',
+            'callback'            => [ __CLASS__, 'resend_code' ],
+            'permission_callback' => '__return_true',
+        ] );
+
         register_rest_route( $ns, '/auth/request-reset', [
             'methods'             => 'POST',
             'callback'            => [ __CLASS__, 'request_reset' ],
@@ -104,6 +110,12 @@ class Go3D_API_Auth {
             'token' => $result['token'],
             'user'  => $result['user'],
         ] );
+    }
+
+    public static function resend_code( WP_REST_Request $req ): WP_REST_Response {
+        $email = sanitize_email( $req->get_param( 'email' ) ?? '' );
+        Go3D_Auth::resend_code( $email ); // always silently succeeds
+        return Go3D_API::ok( [ 'message' => 'If that account still needs verifying, a new code has been sent.' ] );
     }
 
     public static function request_reset( WP_REST_Request $req ): WP_REST_Response {

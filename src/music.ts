@@ -1,0 +1,249 @@
+/**
+ * Procedural cyberpunk ambient music bed.
+ *
+ * Generates an evolving synthwave / Blade-Runner-ish soundscape entirely in
+ * WebAudio — no audio files to ship, no licensing, works identically in the
+ * standalone GitHub Pages build and the WordPress embed. A drone pad, a slow
+ * sub-bass pulse and a sparse echoing pentatonic arp are scheduled on a
+ * look-ahead clock and routed through a feedback-delay "space".
+ *
+ * The system is a singleton (`music`) and owns its own floating toggle button,
+ * so any screen can call enterGame()/leaveGame() without touching the DOM. The
+ * on/off preference persists in localStorage.
+ */
+
+// A2 minor pentatonic, two octaves — cold, filmic, never resolves too happily.
+const ROOT = 55; // A1
+const PENTA = [0, 3, 5, 7, 10, 12, 15, 17, 19, 22]; // semitones across 2 octaves
+const semi = (n: number) => ROOT * Math.pow(2, n / 12);
+
+type Voice = { osc: OscillatorNode; gain: GainNode };
+
+export class MusicSystem {
+  private ctx: AudioContext | null = null;
+  private master: GainNode | null = null;
+  private space: DelayNode | null = null;        // feedback delay (echo/space)
+  private padFilter: BiquadFilterNode | null = null;
+  private lfo: OscillatorNode | null = null;
+  private pad: Voice[] = [];
+  private running = false;
+  private enabled: boolean;
+
+  // Look-ahead scheduler state.
+  private schedulerId: number | null = null;
+  private nextStepTime = 0;
+  private step = 0;
+  private readonly bpm = 82;
+
+  private toggleEl: HTMLButtonElement | null = null;
+
+  constructor() {
+    this.enabled = localStorage.getItem('go3d_music') !== 'off'; // default on
+  }
+
+  // ── Public lifecycle ───────────────────────────────────────────────────────
+
+  /** Call when a game screen is shown: mount the control and start if enabled. */
+  enterGame(): void {
+    this.mountToggle();
+    if (this.toggleEl) this.toggleEl.style.display = '';
+    if (this.enabled) this.start();
+  }
+
+  /** Call when leaving a game screen: stop playback and hide the control. */
+  leaveGame(): void {
+    this.stop();
+    if (this.toggleEl) this.toggleEl.style.display = 'none';
+  }
+
+  // ── Audio graph ────────────────────────────────────────────────────────────
+
+  private start(): void {
+    if (this.running) return;
+    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return;
+    if (!this.ctx) this.ctx = new Ctor();
+    const c = this.ctx;
+    // Autoplay policy: a context created outside a gesture starts suspended.
+    // Entering a game always follows a click, so this resume() resolves.
+    if (c.state === 'suspended') void c.resume();
+
+    this.running = true;
+
+    // Master with a gentle fade-in.
+    const master = c.createGain();
+    master.gain.setValueAtTime(0.0001, c.currentTime);
+    master.gain.exponentialRampToValueAtTime(0.16, c.currentTime + 2.5);
+    master.connect(c.destination);
+    this.master = master;
+
+    // "Space": a feedback delay the arp and bass are sent through for echoes.
+    const space = c.createDelay(1.0);
+    space.delayTime.value = 60 / this.bpm * 0.75; // dotted-eighth echo
+    const fb = c.createGain(); fb.gain.value = 0.34;
+    const wet = c.createGain(); wet.gain.value = 0.5;
+    space.connect(fb); fb.connect(space);
+    space.connect(wet); wet.connect(master);
+    this.space = space;
+
+    // Drone pad: detuned saw stack through a slowly sweeping lowpass.
+    const padFilter = c.createBiquadFilter();
+    padFilter.type = 'lowpass';
+    padFilter.frequency.value = 520;
+    padFilter.Q.value = 6;
+    padFilter.connect(master);
+    this.padFilter = padFilter;
+
+    const lfo = c.createOscillator();
+    lfo.frequency.value = 0.05; // ~20s sweep
+    const lfoGain = c.createGain(); lfoGain.gain.value = 280;
+    lfo.connect(lfoGain); lfoGain.connect(padFilter.frequency);
+    lfo.start();
+    this.lfo = lfo;
+
+    const padGain = c.createGain(); padGain.gain.value = 0.22;
+    padGain.connect(padFilter);
+    [semi(0), semi(7), semi(12), semi(15)].forEach((f, i) => {
+      const osc = c.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = f;
+      osc.detune.value = (i - 1.5) * 7; // a few cents apart → chorus shimmer
+      const g = c.createGain(); g.gain.value = i === 0 ? 0.5 : 0.28;
+      osc.connect(g); g.connect(padGain);
+      osc.start();
+      this.pad.push({ osc, gain: g });
+    });
+
+    // Kick off the note scheduler.
+    this.nextStepTime = c.currentTime + 0.15;
+    this.step = 0;
+    this.schedulerId = window.setInterval(() => this.scheduler(), 25);
+
+    this.syncToggle();
+  }
+
+  private stop(): void {
+    if (!this.running) return;
+    this.running = false;
+    if (this.schedulerId !== null) { clearInterval(this.schedulerId); this.schedulerId = null; }
+    const c = this.ctx;
+    const master = this.master;
+    if (c && master) {
+      const t = c.currentTime;
+      master.gain.cancelScheduledValues(t);
+      master.gain.setValueAtTime(master.gain.value, t);
+      master.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+    }
+    // Tear the graph down after the fade so we don't leak oscillators.
+    const pad = this.pad, lfo = this.lfo;
+    window.setTimeout(() => {
+      try { pad.forEach(v => v.osc.stop()); lfo?.stop(); } catch { /* already stopped */ }
+      master?.disconnect();
+    }, 900);
+    this.pad = [];
+    this.lfo = null;
+    this.master = null;
+    this.space = null;
+    this.padFilter = null;
+    this.syncToggle();
+  }
+
+  // ── Note scheduling ────────────────────────────────────────────────────────
+
+  private scheduler(): void {
+    const c = this.ctx;
+    if (!c || !this.running) return;
+    const stepDur = 60 / this.bpm / 2; // eighth notes
+    while (this.nextStepTime < c.currentTime + 0.12) {
+      this.scheduleStep(this.step, this.nextStepTime);
+      this.nextStepTime += stepDur;
+      this.step = (this.step + 1) % 32;
+    }
+  }
+
+  private scheduleStep(step: number, when: number): void {
+    const c = this.ctx, master = this.master, space = this.space;
+    if (!c || !master || !space) return;
+
+    // Sub-bass pulse on the downbeat of each 4-beat bar (every 8 eighths).
+    if (step % 8 === 0) {
+      const o = c.createOscillator(); o.type = 'sine';
+      // Alternate the bar root for a slow two-bar harmonic rock (i → ♭III).
+      const root = step % 16 === 0 ? semi(0) : semi(3);
+      o.frequency.setValueAtTime(root, when);
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(0.5, when + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.6);
+      o.connect(g); g.connect(master);
+      o.start(when); o.stop(when + 0.65);
+    }
+
+    // Sparse arp: probabilistic so it breathes rather than loops mechanically.
+    const density = step % 2 === 0 ? 0.55 : 0.28;
+    if (Math.random() < density) {
+      const note = PENTA[Math.floor(Math.random() * PENTA.length)] + 12; // up an octave
+      const f = semi(note);
+      const o = c.createOscillator();
+      o.type = Math.random() < 0.5 ? 'triangle' : 'square';
+      o.frequency.setValueAtTime(f, when);
+      const g = c.createGain();
+      const peak = o.type === 'square' ? 0.05 : 0.09;
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(peak, when + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.32);
+      o.connect(g);
+      g.connect(master);
+      g.connect(space); // feed the echo
+      o.start(when); o.stop(when + 0.36);
+    }
+  }
+
+  // ── Toggle button (inline-styled, build-agnostic) ──────────────────────────
+
+  toggle(): void {
+    this.enabled = !this.enabled;
+    localStorage.setItem('go3d_music', this.enabled ? 'on' : 'off');
+    if (this.enabled) this.start(); else this.stop();
+    this.syncToggle();
+  }
+
+  private mountToggle(): void {
+    if (this.toggleEl) return;
+    const b = document.createElement('button');
+    b.id = 'go3d-music-toggle';
+    b.type = 'button';
+    b.title = 'Toggle music';
+    b.setAttribute('aria-label', 'Toggle background music');
+    Object.assign(b.style, {
+      position: 'fixed', left: '16px', bottom: '16px', zIndex: '9999',
+      width: '40px', height: '40px', padding: '0', cursor: 'pointer',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      font: '18px/1 ui-monospace, "SF Mono", Menlo, monospace',
+      color: '#00e5ff', background: 'rgba(5,8,14,0.72)',
+      border: '1px solid rgba(0,229,255,0.55)', borderRadius: '8px',
+      backdropFilter: 'blur(4px)', transition: 'all .15s ease',
+      boxShadow: '0 0 12px rgba(0,229,255,0.25)',
+    } as Partial<CSSStyleDeclaration>);
+    b.addEventListener('click', () => this.toggle());
+    b.addEventListener('mouseenter', () => { b.style.boxShadow = '0 0 18px rgba(0,229,255,0.55)'; });
+    b.addEventListener('mouseleave', () => { this.syncToggle(); });
+    document.body.appendChild(b);
+    this.toggleEl = b;
+    this.syncToggle();
+  }
+
+  private syncToggle(): void {
+    const b = this.toggleEl;
+    if (!b) return;
+    const on = this.enabled;
+    b.textContent = on ? '♪' : '♪̸';
+    b.style.color = on ? '#00e5ff' : '#56606f';
+    b.style.borderColor = on ? 'rgba(0,229,255,0.55)' : 'rgba(120,130,150,0.45)';
+    b.style.boxShadow = on ? '0 0 12px rgba(0,229,255,0.25)' : 'none';
+    b.title = on ? 'Music on — click to mute' : 'Music off — click to play';
+  }
+}
+
+/** Shared singleton — import and call enterGame()/leaveGame() from sessions. */
+export const music = new MusicSystem();

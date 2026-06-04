@@ -26,6 +26,9 @@ export class Lobby {
   private onScreenChange: ScreenChangeCallback;
   private presenceCleanup: (() => void) | null = null;
   private pendingVerifyEmail: string | null = null;
+  /** A game id from a `?go3d_game=` deep link (e.g. a "your turn" email), routed
+   *  into on the first lobby entry after auth, then consumed. */
+  private pendingGameId: number | null = null;
 
   constructor(onScreenChange: ScreenChangeCallback) {
     this.onScreenChange = onScreenChange;
@@ -58,6 +61,13 @@ export class Lobby {
         await AuthState.login(email, pass);
         this.showLobby();
       } catch (err) {
+        // An unverified account returns 403 — route them to the code form
+        // (prefilled) instead of a dead-end error, and re-send a fresh code.
+        if (err instanceof ApiError && err.status === 403) {
+          void AuthState.resendCode(email);
+          this.showVerifyForm(email);
+          return;
+        }
         errEl.textContent = apiErrorMessage(err);
       }
     });
@@ -98,6 +108,17 @@ export class Lobby {
       } catch (err) {
         errEl.textContent = apiErrorMessage(err);
       }
+    });
+    document.getElementById('go3d-verify-resend')!.addEventListener('click', async e => {
+      e.preventDefault();
+      const form  = document.getElementById('go3d-verify-form')!;
+      const errEl = form.querySelector<HTMLElement>('.go3d-form-error')!;
+      const email = this.pendingVerifyEmail
+        ?? (document.getElementById('go3d-login-form')!
+              .querySelector<HTMLInputElement>('[name=email]')!.value);
+      await AuthState.resendCode(email);
+      errEl.style.color = '#0f0';
+      errEl.textContent = '✓ A new code is on its way. Check your inbox.';
     });
     document.getElementById('go3d-verify-back')!.addEventListener('click', e => {
       e.preventDefault();
@@ -141,6 +162,10 @@ export class Lobby {
     if (verified === '1') {
       showToast('Email verified! You can now log in.', 'success');
     }
+    // Deep link from a "your turn" / result email: /?go3d_game=ID. Stashed now,
+    // routed into on the first showLobby() after auth (see showLobby).
+    const gid = Number(url.searchParams.get('go3d_game'));
+    if (Number.isInteger(gid) && gid > 0) this.pendingGameId = gid;
   }
 
   /** Swap the auth panel from the register tab to the email-code entry form. */
@@ -273,6 +298,19 @@ export class Lobby {
   async showLobby(): Promise<void> {
     const user = AuthState.user;
     if (!user) { this.showAuth(); return; }
+
+    // Honour a pending deep link exactly once: jump straight into the game the
+    // email pointed at instead of showing the lobby.
+    if (this.pendingGameId !== null) {
+      const id = this.pendingGameId;
+      this.pendingGameId = null;
+      // Drop the param so "← Lobby" then refresh doesn't re-enter the game.
+      const u = new URL(window.location.href);
+      u.searchParams.delete('go3d_game');
+      window.history.replaceState({}, '', u.toString());
+      this.onScreenChange('game', id);
+      return;
+    }
 
     document.getElementById('go3d-lobby-username')!.textContent = user.username;
     document.getElementById('go3d-lobby-elo')!.textContent      = String(user.elo);

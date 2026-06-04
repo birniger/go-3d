@@ -39,6 +39,7 @@
       </label>
       <div class="go3d-form-error" aria-live="polite"></div>
       <button type="submit" class="go3d-btn-primary">Verify &amp; sign in</button>
+      <p>Didn't get it? <a href="#" id="go3d-verify-resend">Resend code</a></p>
       <p><a href="#" id="go3d-verify-back">Back to login</a></p>
     </form>
 

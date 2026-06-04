@@ -175,6 +175,35 @@ class Go3D_Auth {
         return [ 'ok' => true, 'token' => $token, 'user' => self::public_user( $user ) ];
     }
 
+    /**
+     * Re-issue a fresh verification code for an unverified account and email it.
+     * Silently no-ops for unknown or already-verified addresses (don't reveal
+     * which emails exist). Rate-limited per IP.
+     */
+    public static function resend_code( string $email ): void {
+        global $wpdb;
+        $t = $wpdb->prefix . 'go3d_users';
+
+        // Rate limit: 5 resends per IP per 15 min.
+        $ip  = sanitize_text_field( $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0' );
+        $key = 'go3d_resend_' . md5( $ip );
+        $cnt = (int) get_transient( $key );
+        if ( $cnt >= 5 ) return;
+        set_transient( $key, $cnt + 1, 15 * MINUTE_IN_SECONDS );
+
+        $user = $wpdb->get_row(
+            $wpdb->prepare( "SELECT * FROM $t WHERE email = %s AND email_verified = 0", sanitize_email( $email ) ),
+            ARRAY_A
+        );
+        if ( ! $user ) return;
+
+        $token = bin2hex( random_bytes( 32 ) );
+        $code  = str_pad( (string) random_int( 0, 999999 ), 6, '0', STR_PAD_LEFT );
+        $wpdb->update( $t, [ 'verification_token' => $token, 'verification_code' => $code ], [ 'id' => $user['id'] ] );
+
+        self::send_verification_email( (int) $user['id'], $user['email'], $user['username'], $token, $code );
+    }
+
     // ── Password reset ────────────────────────────────────────────────────────
 
     public static function request_reset( string $email ): void {

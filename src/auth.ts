@@ -64,6 +64,11 @@ export const AuthState = {
     return _user;
   },
 
+  /** Re-send the verification code for an unverified account. Always resolves. */
+  async resendCode(email: string): Promise<void> {
+    await AuthAPI.resendCode(email);
+  },
+
   async requestReset(email: string): Promise<void> {
     await AuthAPI.requestReset(email);
   },
