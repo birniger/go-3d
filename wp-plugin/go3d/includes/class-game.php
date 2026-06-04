@@ -10,6 +10,11 @@ class Go3D_Game {
     const SPHERE_FREQ_MIN = 2;
     const SPHERE_FREQ_MAX = 8;
 
+    /** Edge-length bounds for cube/stack mode (board_size column). Presets are
+     *  5/9/13/19 (the classic Go sizes); custom may be any value in this range. */
+    const CUBE_SIZE_MIN = 2;
+    const CUBE_SIZE_MAX = 19;
+
     // ── Create / join ─────────────────────────────────────────────────────────
 
     /**
@@ -27,7 +32,9 @@ class Go3D_Game {
             // Presets are 2/3/4 (42/92/162 points); custom is clamped to 2–8.
             $board_size = max( self::SPHERE_FREQ_MIN, min( self::SPHERE_FREQ_MAX, (int)( $settings['board_size'] ?? 3 ) ) );
         } else {
-            $board_size = in_array( (int)( $settings['board_size'] ?? 9 ), [4,5,7,9,13], true ) ? (int)$settings['board_size'] : 9;
+            // Cube/stack: any edge length in [CUBE_SIZE_MIN, CUBE_SIZE_MAX].
+            // Presets (5/9/13/19) and the Custom n³ input both land here.
+            $board_size = max( self::CUBE_SIZE_MIN, min( self::CUBE_SIZE_MAX, (int)( $settings['board_size'] ?? 9 ) ) );
         }
         $scoring_mode = in_array( $settings['scoring_mode'] ?? '', ['chinese','japanese'],      true ) ? $settings['scoring_mode']      : 'chinese';
         $komi         = (float)( $settings['komi']         ?? 6.5 );
@@ -37,21 +44,24 @@ class Go3D_Game {
         // Derive initial clocks.
         //  – absolute/fischer: the clock is just main time (fischer adds an
         //    increment per move, applied in submit_move()).
-        //  – byoyomi: we don't track per-move period resets in the schema, so we
-        //    fold the periods into the starting budget (main + periods × period).
-        //    This gives each player the correct TOTAL thinking time; it just
-        //    behaves as one absolute pool rather than resetting each period.
+        //  – byoyomi: main time plus a number of reserve periods that reset on
+        //    every move completed within the period (real byōyomi). The period
+        //    count is tracked in p1_periods/p2_periods; once main time runs out
+        //    p1_in_byoyomi/p2_in_byoyomi flip and the per-move arithmetic lives
+        //    in Go3D_Clock::byoyomi_move().
         $p1_time_ms = null;
         $p2_time_ms = null;
+        $p1_periods = null;
+        $p2_periods = null;
         if ( $time_control !== 'none' && isset( $settings['time_settings']['main_time_s'] ) ) {
             $main = (int)$settings['time_settings']['main_time_s'] * 1000;
-            if ( $time_control === 'byoyomi' ) {
-                $periods = max( 0, (int)( $settings['time_settings']['byoyomi_periods'] ?? 0 ) );
-                $ptime   = max( 0, (int)( $settings['time_settings']['byoyomi_time_s']  ?? 0 ) );
-                $main   += $periods * $ptime * 1000;
-            }
             $p1_time_ms = $main;
             $p2_time_ms = $main;
+            if ( $time_control === 'byoyomi' ) {
+                $periods    = max( 0, (int)( $settings['time_settings']['byoyomi_periods'] ?? 0 ) );
+                $p1_periods = $periods;
+                $p2_periods = $periods;
+            }
         }
 
         if ( $mode === 'sphere' ) {
@@ -72,6 +82,10 @@ class Go3D_Game {
             'time_settings'    => $time_settings,
             'p1_time_ms'       => $p1_time_ms,
             'p2_time_ms'       => $p2_time_ms,
+            'p1_periods'       => $p1_periods,
+            'p2_periods'       => $p2_periods,
+            'p1_in_byoyomi'    => 0,
+            'p2_in_byoyomi'    => 0,
             'current_player'   => 1,
             'consecutive_passes' => 0,
             'board_hash'       => $hash,
@@ -135,6 +149,13 @@ class Go3D_Game {
         if ( $game['status'] !== 'active' )
             return [ 'ok' => false, 'error' => 'Game is not active.', 'code' => 409 ];
 
+        // Lazily enforce the clock before accepting a move: if the current
+        // player's time expired since the last action, end the game now rather
+        // than letting a late move slip through before the cron sweep runs.
+        if ( self::enforce_timeout( $game ) ) {
+            return [ 'ok' => false, 'error' => 'Game ended on time.', 'code' => 409 ];
+        }
+
         $player_slot = self::player_slot( $game, $user_id );
         if ( ! $player_slot )
             return [ 'ok' => false, 'error' => 'You are not a player in this game.', 'code' => 403 ];
@@ -150,32 +171,63 @@ class Go3D_Game {
         $p1_time_ms = $game['p1_time_ms'] !== null ? (int)$game['p1_time_ms'] : null;
         $p2_time_ms = $game['p2_time_ms'] !== null ? (int)$game['p2_time_ms'] : null;
         $time_ms    = null;
+        // Extra byōyomi columns to persist (empty for non-byōyomi games, which
+        // leaves those columns untouched).
+        $byo = [];
         if ( $game['time_control'] !== 'none' && ! empty( $game['last_move_at'] ) ) {
             $elapsed_ms = max( 0, ( time() - strtotime( $game['last_move_at'] . ' UTC' ) ) * 1000 );
             $time_ms    = $elapsed_ms;
-            if ( $player_slot === 1 && $p1_time_ms !== null ) $p1_time_ms = max( 0, $p1_time_ms - $elapsed_ms );
-            if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms = max( 0, $p2_time_ms - $elapsed_ms );
 
-            // Fischer: add the increment back to the player who just moved
-            // (only for real board moves, not resignation).
-            if ( $game['time_control'] === 'fischer' && $type !== 'resign' ) {
-                $ts  = json_decode( $game['time_settings'] ?? '{}', true ) ?: [];
-                $inc = max( 0, (int)( $ts['fischer_increment_s'] ?? 0 ) ) * 1000;
-                if ( $player_slot === 1 && $p1_time_ms !== null ) $p1_time_ms += $inc;
-                if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms += $inc;
+            if ( $game['time_control'] === 'byoyomi' ) {
+                // Real byōyomi: deduct via Go3D_Clock, tracking period count and
+                // the main→byōyomi transition for the player who just moved.
+                $ts        = json_decode( $game['time_settings'] ?? '{}', true ) ?: [];
+                $period_ms = max( 1, (int)( $ts['byoyomi_time_s'] ?? 0 ) * 1000 );
+                $cur_time  = $player_slot === 1 ? (int)$p1_time_ms : (int)$p2_time_ms;
+                $cur_per   = (int)( $player_slot === 1 ? $game['p1_periods'] : $game['p2_periods'] );
+                $cur_byo   = (bool)( $player_slot === 1 ? $game['p1_in_byoyomi'] : $game['p2_in_byoyomi'] );
+                $r         = Go3D_Clock::byoyomi_move( $cur_time, $cur_per, $cur_byo, $period_ms, $elapsed_ms );
+
+                if ( $r['flagged'] ) {
+                    // The move itself ran out the clock → loss on time.
+                    return self::end_game( $game, $user_id, $player_slot, 'timeout', $time_ms,
+                        $player_slot === 1 ? 0 : $p1_time_ms,
+                        $player_slot === 2 ? 0 : $p2_time_ms, $byo );
+                }
+
+                if ( $player_slot === 1 ) { $p1_time_ms = $r['time_ms']; } else { $p2_time_ms = $r['time_ms']; }
+                $byo = [
+                    'p1_periods'    => $player_slot === 1 ? $r['periods'] : (int)$game['p1_periods'],
+                    'p2_periods'    => $player_slot === 2 ? $r['periods'] : (int)$game['p2_periods'],
+                    'p1_in_byoyomi' => $player_slot === 1 ? ( $r['in_byoyomi'] ? 1 : 0 ) : (int)$game['p1_in_byoyomi'],
+                    'p2_in_byoyomi' => $player_slot === 2 ? ( $r['in_byoyomi'] ? 1 : 0 ) : (int)$game['p2_in_byoyomi'],
+                ];
+            } else {
+                // Absolute / Fischer: simple subtraction.
+                if ( $player_slot === 1 && $p1_time_ms !== null ) $p1_time_ms = max( 0, $p1_time_ms - $elapsed_ms );
+                if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms = max( 0, $p2_time_ms - $elapsed_ms );
+
+                // Fischer: add the increment back to the player who just moved
+                // (only for real board moves, not resignation).
+                if ( $game['time_control'] === 'fischer' && $type !== 'resign' ) {
+                    $ts  = json_decode( $game['time_settings'] ?? '{}', true ) ?: [];
+                    $inc = max( 0, (int)( $ts['fischer_increment_s'] ?? 0 ) ) * 1000;
+                    if ( $player_slot === 1 && $p1_time_ms !== null ) $p1_time_ms += $inc;
+                    if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms += $inc;
+                }
             }
         }
 
         if ( $type === 'resign' ) {
-            return self::end_game( $game, $user_id, $player_slot, 'resign', $time_ms, $p1_time_ms, $p2_time_ms );
+            return self::end_game( $game, $user_id, $player_slot, 'resign', $time_ms, $p1_time_ms, $p2_time_ms, $byo );
         }
 
         if ( $type === 'pass' ) {
-            return self::handle_pass( $game, $user_id, $player_slot, $time_ms, $p1_time_ms, $p2_time_ms );
+            return self::handle_pass( $game, $user_id, $player_slot, $time_ms, $p1_time_ms, $p2_time_ms, $byo );
         }
 
         if ( $type === 'place' ) {
-            return self::handle_place( $game, $user_id, $player_slot, $move_data, $time_ms, $p1_time_ms, $p2_time_ms );
+            return self::handle_place( $game, $user_id, $player_slot, $move_data, $time_ms, $p1_time_ms, $p2_time_ms, $byo );
         }
 
         return [ 'ok' => false, 'error' => 'Unknown move type.', 'code' => 422 ];
@@ -183,7 +235,7 @@ class Go3D_Game {
 
     // ── Pass ─────────────────────────────────────────────────────────────────
 
-    private static function handle_pass( array $game, int $user_id, int $player_slot, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms ): array {
+    private static function handle_pass( array $game, int $user_id, int $player_slot, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms, array $byo = [] ): array {
         global $wpdb;
         $gt = $wpdb->prefix . 'go3d_games';
         $mt = $wpdb->prefix . 'go3d_moves';
@@ -219,16 +271,16 @@ class Go3D_Game {
                 if ( $active_layer < $size - 1 ) {
                     $new_layer   = $active_layer + 1;
                     $next_player = 3 - $player_slot;
-                    $wpdb->update( $gt, [
+                    $wpdb->update( $gt, array_merge( [
                         'consecutive_passes' => 0,
                         'active_layer'       => $new_layer,
                         'current_player'     => $next_player,
                         'p1_time_ms'         => $p1_time_ms,
                         'p2_time_ms'         => $p2_time_ms,
                         'last_move_at'       => $now,
-                    ], [ 'id' => $game['id'] ] );
+                    ], $byo ), [ 'id' => $game['id'] ] );
 
-                    $payload = [
+                    $payload = array_merge( [
                         'type'         => 'layer-advance',
                         'move_number'  => $move_number,
                         'player_slot'  => $player_slot,
@@ -236,32 +288,32 @@ class Go3D_Game {
                         'active_layer' => $new_layer,
                         'p1_time_ms'   => $p1_time_ms,
                         'p2_time_ms'   => $p2_time_ms,
-                    ];
+                    ], $byo );
                     Go3D_Pusher::trigger( "private-game-{$game['id']}", 'move', $payload );
                     return [ 'ok' => true, 'event' => 'move', 'payload' => $payload ];
                 }
                 // Top layer reached → fall through and score the whole cube.
             }
             // Two consecutive passes → score and end
-            return self::end_by_scoring( $game, $move_number, $p1_time_ms, $p2_time_ms );
+            return self::end_by_scoring( $game, $move_number, $p1_time_ms, $p2_time_ms, $byo );
         }
 
-        $wpdb->update( $gt, [
+        $wpdb->update( $gt, array_merge( [
             'consecutive_passes' => $consecutive,
             'current_player'     => $next_player,
             'p1_time_ms'         => $p1_time_ms,
             'p2_time_ms'         => $p2_time_ms,
             'last_move_at'       => $now,
-        ], [ 'id' => $game['id'] ] );
+        ], $byo ), [ 'id' => $game['id'] ] );
 
-        $payload = [
+        $payload = array_merge( [
             'type'        => 'pass',
             'move_number' => $move_number,
             'player_slot' => $player_slot,
             'next_player' => $next_player,
             'p1_time_ms'  => $p1_time_ms,
             'p2_time_ms'  => $p2_time_ms,
-        ];
+        ], $byo );
         Go3D_Pusher::trigger( "private-game-{$game['id']}", 'move', $payload );
 
         return [ 'ok' => true, 'event' => 'move', 'payload' => $payload ];
@@ -269,7 +321,7 @@ class Go3D_Game {
 
     // ── Place ────────────────────────────────────────────────────────────────
 
-    private static function handle_place( array $game, int $user_id, int $player_slot, array $move_data, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms ): array {
+    private static function handle_place( array $game, int $user_id, int $player_slot, array $move_data, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms, array $byo = [] ): array {
         global $wpdb;
         $gt = $wpdb->prefix . 'go3d_games';
         $mt = $wpdb->prefix . 'go3d_moves';
@@ -277,7 +329,7 @@ class Go3D_Game {
         // Sphere mode plays on a geodesic graph: a single node index (stored in
         // the x column, y/z null) and the graph rule engine.
         if ( ( $game['mode'] ?? 'cube' ) === 'sphere' ) {
-            return self::handle_place_sphere( $game, $user_id, $player_slot, $move_data, $time_ms, $p1_time_ms, $p2_time_ms );
+            return self::handle_place_sphere( $game, $user_id, $player_slot, $move_data, $time_ms, $p1_time_ms, $p2_time_ms, $byo );
         }
 
         $x = isset( $move_data['x'] ) ? (int)$move_data['x'] : -1;
@@ -326,7 +378,7 @@ class Go3D_Game {
 
         $next_player = 3 - $player_slot;
 
-        $wpdb->update( $gt, [
+        $wpdb->update( $gt, array_merge( [
             'consecutive_passes' => 0,
             'current_player'     => $next_player,
             'board_hash'         => $result['hash'],
@@ -334,9 +386,9 @@ class Go3D_Game {
             'p1_time_ms'         => $p1_time_ms,
             'p2_time_ms'         => $p2_time_ms,
             'last_move_at'       => current_time( 'mysql', true ),
-        ], [ 'id' => $game['id'] ] );
+        ], $byo ), [ 'id' => $game['id'] ] );
 
-        $payload = [
+        $payload = array_merge( [
             'type'        => 'place',
             'move_number' => $move_number,
             'player_slot' => $player_slot,
@@ -347,7 +399,7 @@ class Go3D_Game {
             'next_player' => $next_player,
             'p1_time_ms'  => $p1_time_ms,
             'p2_time_ms'  => $p2_time_ms,
-        ];
+        ], $byo );
         Go3D_Pusher::trigger( "private-game-{$game['id']}", 'move', $payload );
 
         return [ 'ok' => true, 'event' => 'move', 'payload' => $payload ];
@@ -358,7 +410,7 @@ class Go3D_Game {
      * node index in $move_data['x']; y/z are unused. Captures are returned as a
      * flat list of node indices.
      */
-    private static function handle_place_sphere( array $game, int $user_id, int $player_slot, array $move_data, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms ): array {
+    private static function handle_place_sphere( array $game, int $user_id, int $player_slot, array $move_data, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms, array $byo = [] ): array {
         global $wpdb;
         $gt = $wpdb->prefix . 'go3d_games';
         $mt = $wpdb->prefix . 'go3d_moves';
@@ -394,7 +446,7 @@ class Go3D_Game {
 
         $next_player = 3 - $player_slot;
 
-        $wpdb->update( $gt, [
+        $wpdb->update( $gt, array_merge( [
             'consecutive_passes' => 0,
             'current_player'     => $next_player,
             'board_hash'         => $result['hash'],
@@ -402,9 +454,9 @@ class Go3D_Game {
             'p1_time_ms'         => $p1_time_ms,
             'p2_time_ms'         => $p2_time_ms,
             'last_move_at'       => current_time( 'mysql', true ),
-        ], [ 'id' => $game['id'] ] );
+        ], $byo ), [ 'id' => $game['id'] ] );
 
-        $payload = [
+        $payload = array_merge( [
             'type'        => 'place',
             'move_number' => $move_number,
             'player_slot' => $player_slot,
@@ -414,7 +466,7 @@ class Go3D_Game {
             'next_player' => $next_player,
             'p1_time_ms'  => $p1_time_ms,
             'p2_time_ms'  => $p2_time_ms,
-        ];
+        ], $byo );
         Go3D_Pusher::trigger( "private-game-{$game['id']}", 'move', $payload );
 
         return [ 'ok' => true, 'event' => 'move', 'payload' => $payload ];
@@ -426,7 +478,7 @@ class Go3D_Game {
      * End game by resignation or timeout.
      * $loser_slot = 1 or 2 (the player who lost).
      */
-    private static function end_game( array $game, int $user_id, int $loser_slot, string $reason, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms ): array {
+    private static function end_game( array $game, int $user_id, int $loser_slot, string $reason, ?int $time_ms, ?int $p1_time_ms, ?int $p2_time_ms, array $byo = [] ): array {
         global $wpdb;
         $mt = $wpdb->prefix . 'go3d_moves';
 
@@ -447,13 +499,13 @@ class Go3D_Game {
         $winner_id   = (int)$game[ "player{$winner_slot}_id" ];
         $loser_id    = (int)$game[ "player{$loser_slot}_id" ];
 
-        return self::finalise_game( $game, $winner_id, $loser_id, $reason, null, null, $p1_time_ms, $p2_time_ms );
+        return self::finalise_game( $game, $winner_id, $loser_id, $reason, null, null, $p1_time_ms, $p2_time_ms, $byo );
     }
 
     /**
      * End game by double-pass → count territory.
      */
-    private static function end_by_scoring( array $game, int $move_number, ?int $p1_time_ms, ?int $p2_time_ms ): array {
+    private static function end_by_scoring( array $game, int $move_number, ?int $p1_time_ms, ?int $p2_time_ms, array $byo = [] ): array {
         $moves    = self::get_moves( (int)$game['id'] );
         $p1_id    = (int)$game['player1_id'];
         $p2_id    = (int)$game['player2_id'];
@@ -506,13 +558,13 @@ class Go3D_Game {
             $reason    = 'score';
         }
 
-        return self::finalise_game( $game, $winner_id, null, $reason, $p1_score, $p2_score, $p1_time_ms, $p2_time_ms );
+        return self::finalise_game( $game, $winner_id, null, $reason, $p1_score, $p2_score, $p1_time_ms, $p2_time_ms, $byo );
     }
 
     /**
      * Write the finished state, update ELO, fire Pusher event, queue notification.
      */
-    private static function finalise_game( array $game, ?int $winner_id, ?int $loser_id, string $end_reason, ?float $p1_score, ?float $p2_score, ?int $p1_time_ms, ?int $p2_time_ms ): array {
+    private static function finalise_game( array $game, ?int $winner_id, ?int $loser_id, string $end_reason, ?float $p1_score, ?float $p2_score, ?int $p1_time_ms, ?int $p2_time_ms, array $byo = [] ): array {
         global $wpdb;
         $gt  = $wpdb->prefix . 'go3d_games';
         $now = current_time( 'mysql', true );
@@ -531,7 +583,7 @@ class Go3D_Game {
             [ $elo_change_p1, $elo_change_p2 ] = Go3D_Elo::update( $p1_id, $p2_id, $outcome );
         }
 
-        $wpdb->update( $gt, [
+        $wpdb->update( $gt, array_merge( [
             'status'        => 'finished',
             'winner_id'     => $winner_id,
             'end_reason'    => $end_reason,
@@ -543,7 +595,7 @@ class Go3D_Game {
             'p2_time_ms'    => $p2_time_ms,
             'finished_at'   => $now,
             'last_move_at'  => $now,
-        ], [ 'id' => $game['id'] ] );
+        ], $byo ), [ 'id' => $game['id'] ] );
 
         $payload = [
             'status'        => 'finished',
@@ -594,6 +646,14 @@ class Go3D_Game {
         $game = self::get_row( $game_id );
         if ( ! $game ) return null;
 
+        // Lazily enforce the clock so a viewer (either player or a spectator)
+        // sees the game flip to "finished" as soon as the flag falls, even if
+        // the WP-Cron sweep hasn't fired yet. Re-read the row after ending so
+        // the returned state reflects the timeout result.
+        if ( self::enforce_timeout( $game ) ) {
+            $game = self::get_row( $game_id ) ?: $game;
+        }
+
         $moves    = self::get_moves( $game_id );
         $is_sphere = ( $game['mode'] ?? 'cube' ) === 'sphere';
 
@@ -626,6 +686,10 @@ class Go3D_Game {
             'time_settings'      => $game['time_settings'] ? json_decode( $game['time_settings'], true ) : null,
             'p1_time_ms'         => $game['p1_time_ms'] !== null ? (int)$game['p1_time_ms'] : null,
             'p2_time_ms'         => $game['p2_time_ms'] !== null ? (int)$game['p2_time_ms'] : null,
+            'p1_periods'         => isset( $game['p1_periods'] ) && $game['p1_periods'] !== null ? (int)$game['p1_periods'] : null,
+            'p2_periods'         => isset( $game['p2_periods'] ) && $game['p2_periods'] !== null ? (int)$game['p2_periods'] : null,
+            'p1_in_byoyomi'      => ! empty( $game['p1_in_byoyomi'] ),
+            'p2_in_byoyomi'      => ! empty( $game['p2_in_byoyomi'] ),
             'current_player'     => (int)$game['current_player'],
             'consecutive_passes' => (int)$game['consecutive_passes'],
             'status'             => $game['status'],
@@ -707,25 +771,54 @@ class Go3D_Game {
         ) ?: [];
 
         foreach ( $games as $game ) {
-            $current   = (int)$game['current_player'];
-            $clock_raw = $current === 1 ? $game['p1_time_ms'] : $game['p2_time_ms'];
-
-            // Skip games with no usable clock yet:
-            //  – no move has been made (last_move_at null) → clock not running
-            //  – the current player's clock column is NULL (not an absolute
-            //    main-time game) → casting NULL to 0 would falsely time them out
-            if ( empty( $game['last_move_at'] ) || $clock_raw === null ) continue;
-            $clock = (int)$clock_raw;
-
-            $elapsed_ms = ( time() - strtotime( $game['last_move_at'] . ' UTC' ) ) * 1000;
-            if ( $elapsed_ms > $clock ) {
-                // This player timed out
-                $loser_id  = (int)$game[ "player{$current}_id" ];
-                self::end_game( $game, $loser_id, $current, 'timeout', null,
-                    $current === 1 ? 0 : (int)$game['p1_time_ms'],
-                    $current === 2 ? 0 : (int)$game['p2_time_ms'] );
-            }
+            self::enforce_timeout( $game );
         }
+    }
+
+    /**
+     * If the given (active, timed) game's current player has run out the clock,
+     * end the game by timeout. Returns true if the game was ended.
+     *
+     * This is the single source of truth for timeout detection. It is called
+     * both from the WP-Cron sweep (process_timeouts) and lazily on every
+     * get_state / submit_move so a flag is enforced the moment either player
+     * looks at the board — not only when the hourly cron happens to run.
+     */
+    public static function enforce_timeout( array $game ): bool {
+        if ( ( $game['status'] ?? '' ) !== 'active' || ( $game['time_control'] ?? 'none' ) === 'none' ) {
+            return false;
+        }
+
+        $current   = (int)$game['current_player'];
+        $clock_raw = $current === 1 ? $game['p1_time_ms'] : $game['p2_time_ms'];
+
+        // Skip games with no usable clock yet:
+        //  – no move has been made (last_move_at null) → clock not running
+        //  – the current player's clock column is NULL (not an absolute
+        //    main-time game) → casting NULL to 0 would falsely time them out
+        if ( empty( $game['last_move_at'] ) || $clock_raw === null ) return false;
+        $clock = (int)$clock_raw;
+
+        // Byōyomi: the flag only falls once main time AND every reserve period
+        // are exhausted, so the real budget is larger than the current allowance.
+        if ( ( $game['time_control'] ?? '' ) === 'byoyomi' ) {
+            $ts        = json_decode( $game['time_settings'] ?? '{}', true ) ?: [];
+            $period_ms = max( 1, (int)( $ts['byoyomi_time_s'] ?? 0 ) * 1000 );
+            $periods   = (int)( $current === 1 ? $game['p1_periods'] : $game['p2_periods'] );
+            $in_byo    = (bool)( $current === 1 ? $game['p1_in_byoyomi'] : $game['p2_in_byoyomi'] );
+            $clock     = Go3D_Clock::byoyomi_remaining_total( $clock, $periods, $in_byo, $period_ms );
+        }
+
+        $elapsed_ms = ( time() - strtotime( $game['last_move_at'] . ' UTC' ) ) * 1000;
+        if ( $elapsed_ms > $clock ) {
+            // This player timed out
+            $loser_id = (int)$game[ "player{$current}_id" ];
+            self::end_game( $game, $loser_id, $current, 'timeout', null,
+                $current === 1 ? 0 : (int)$game['p1_time_ms'],
+                $current === 2 ? 0 : (int)$game['p2_time_ms'] );
+            return true;
+        }
+        return false;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

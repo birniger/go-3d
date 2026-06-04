@@ -69,13 +69,14 @@
               </select>
             </label>
             <label id="go3d-cube-size-wrap">Board size
-              <select name="board_size" id="go3d-cube-size">
+              <select id="go3d-cube-size">
                 <option value="9" selected>9×9×9</option>
-                <option value="7">7×7×7</option>
                 <option value="5">5×5×5</option>
-                <option value="4">4×4×4</option>
                 <option value="13">13×13×13</option>
+                <option value="19">19×19×19</option>
+                <option value="custom">Custom…</option>
               </select>
+              <input type="number" id="go3d-cube-custom" value="9" min="2" max="19" step="1" style="width:4em;display:none;" title="Cube edge length (2–19)">
             </label>
             <label id="go3d-sphere-size-wrap" style="display:none;">Sphere size
               <select id="go3d-sphere-size">
@@ -144,6 +145,18 @@
         <p class="go3d-empty-msg" id="go3d-no-active-games" style="display:none;">No active games.</p>
       </section>
 
+      <!-- Leaderboard -->
+      <section class="go3d-panel">
+        <h3>Leaderboard <button id="go3d-refresh-leaderboard" class="go3d-btn-ghost go3d-btn-sm">↻</button></h3>
+        <table class="go3d-table" id="go3d-leaderboard-table">
+          <thead><tr>
+            <th>#</th><th>Player</th><th>ELO</th><th>W</th><th>L</th><th>D</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="go3d-empty-msg" id="go3d-no-leaderboard" style="display:none;">No ranked players yet.</p>
+      </section>
+
     </div><!-- .go3d-lobby-body -->
   </div><!-- #go3d-lobby -->
 
@@ -170,6 +183,7 @@
           <span class="go3d-stone-dot go3d-stone-black">●</span>
           <span id="go3d-p1-name">—</span>
           <span id="go3d-p1-elo" class="go3d-elo-badge"></span>
+          <span id="go3d-p1-caps" class="go3d-cap-count" title="Stones captured"></span>
         </div>
 
         <span id="go3d-turn-indicator" class="go3d-turn-label" aria-live="polite"></span>
@@ -179,6 +193,7 @@
           <span class="go3d-stone-dot go3d-stone-white">○</span>
           <span id="go3d-p2-name">—</span>
           <span id="go3d-p2-elo" class="go3d-elo-badge"></span>
+          <span id="go3d-p2-caps" class="go3d-cap-count" title="Stones captured"></span>
         </div>
       </div>
 
@@ -205,8 +220,32 @@
 
     </div><!-- #go3d-game-topbar -->
 
+    <!-- Stack mode: which build layer is active -->
+    <div id="go3d-layer-banner" style="display:none;" aria-live="polite"></div>
+
     <!-- Canvas injected here by the JS bundle -->
     <div id="go3d-canvas-wrap"></div>
+
+    <!--
+      View controls — slice / camera / score. JS shows the relevant groups per
+      mode (slice + camera are cube/stack only; score works in every mode).
+    -->
+    <div id="go3d-view-controls">
+      <div class="go3d-vc-group" id="go3d-slice-group">
+        <span class="go3d-vc-label">Slice</span>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-x" title="Slice along X (key: X)">X</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-y" title="Slice along Y (key: Y)">Y</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-z" title="Slice along Z (key: Z)">Z</button>
+      </div>
+      <div class="go3d-vc-group" id="go3d-camera-group">
+        <span class="go3d-vc-label">View</span>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-cam-top"   title="Top view">Top</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-cam-front" title="Front view">Front</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-cam-side"  title="Side view">Side</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-cam-iso"   title="Isometric view">Iso</button>
+      </div>
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-score-btn" title="Estimate territory">Score</button>
+    </div>
 
     <!-- In-game action buttons (pass / resign) shown over the canvas -->
     <div id="go3d-game-actions">
@@ -214,9 +253,33 @@
       <button id="go3d-resign-btn" class="go3d-btn-ghost go3d-btn-danger">Resign</button>
     </div>
 
+    <!-- Replay controls — shown only after a finished game is opened -->
+    <div id="go3d-replay-bar" style="display:none;">
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-replay-first" title="First move">⏮</button>
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-replay-prev"  title="Previous move">◀</button>
+      <span id="go3d-replay-status">—</span>
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-replay-next"  title="Next move">▶</button>
+      <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-replay-last"  title="Last move">⏭</button>
+    </div>
+
     <!-- Waiting overlay — shown when it's the opponent's turn -->
     <div id="go3d-waiting-overlay" style="display:none;" aria-live="polite">
       Waiting for opponent…
+    </div>
+
+    <!-- First-run onboarding overlay (dismissed; remembered in localStorage) -->
+    <div id="go3d-onboarding" style="display:none;">
+      <div class="go3d-onboarding-card">
+        <h3>Welcome to Go³D</h3>
+        <ul>
+          <li><strong>Place a stone:</strong> click an empty point on the board.</li>
+          <li><strong>See inside (cube/stack):</strong> press <kbd>X</kbd>/<kbd>Y</kbd>/<kbd>Z</kbd> or the <em>Slice</em> buttons, then arrow keys to move the slice.</li>
+          <li><strong>Keyboard cursor:</strong> arrow keys move a cursor; <kbd>Enter</kbd> places. <kbd>Q</kbd>/<kbd>E</kbd> move on the vertical axis.</li>
+          <li><strong>Snap the camera:</strong> use the <em>View</em> buttons (Top / Front / Side / Iso).</li>
+          <li><strong>Score:</strong> the <em>Score</em> button shades estimated territory.</li>
+        </ul>
+        <button class="go3d-btn-primary" id="go3d-onboarding-dismiss">Got it</button>
+      </div>
     </div>
 
   </div>

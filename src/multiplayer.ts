@@ -312,6 +312,10 @@ export class MultiplayerClockDisplay {
   private el1: HTMLElement | null;
   private el2: HTMLElement | null;
   private bar: HTMLElement | null;
+  private timeControl = 'none';
+  // Byōyomi period counts (null when the game isn't byōyomi or hasn't entered it).
+  private p1Periods: number | null = null;
+  private p2Periods: number | null = null;
 
   constructor() {
     this.el1 = document.getElementById('go3d-p1-clock');
@@ -320,7 +324,11 @@ export class MultiplayerClockDisplay {
   }
 
   /** Call once when the game loads. Hides the bar for correspondence games. */
-  init(timeControl: string, currentPlayer: 1 | 2, p1Ms: number | null, p2Ms: number | null): void {
+  init(timeControl: string, currentPlayer: 1 | 2, p1Ms: number | null, p2Ms: number | null,
+       p1Periods: number | null = null, p2Periods: number | null = null): void {
+    this.timeControl = timeControl;
+    this.p1Periods = p1Periods;
+    this.p2Periods = p2Periods;
     if (!this.bar) return;
     if (timeControl === 'none') {
       this.bar.style.display = 'none';
@@ -330,15 +338,26 @@ export class MultiplayerClockDisplay {
     this.update(currentPlayer, p1Ms, p2Ms);
   }
 
-  /** Called on every onClockTick from MultiplayerController. */
-  update(currentPlayer: 1 | 2, p1Ms: number | null, p2Ms: number | null): void {
-    this._render(this.el1, p1Ms, currentPlayer === 1);
-    this._render(this.el2, p2Ms, currentPlayer === 2);
+  /** Update the remaining byōyomi period counts (from a move payload / state sync). */
+  setPeriods(p1Periods: number | null | undefined, p2Periods: number | null | undefined): void {
+    if (p1Periods !== undefined && p1Periods !== null) this.p1Periods = p1Periods;
+    if (p2Periods !== undefined && p2Periods !== null) this.p2Periods = p2Periods;
   }
 
-  private _render(el: HTMLElement | null, ms: number | null, active: boolean): void {
+  /** Called on every onClockTick from MultiplayerController. */
+  update(currentPlayer: 1 | 2, p1Ms: number | null, p2Ms: number | null): void {
+    this._render(this.el1, p1Ms, currentPlayer === 1, this.p1Periods);
+    this._render(this.el2, p2Ms, currentPlayer === 2, this.p2Periods);
+  }
+
+  private _render(el: HTMLElement | null, ms: number | null, active: boolean, periods: number | null): void {
     if (!el) return;
-    el.textContent = formatClock(ms);
+    let text = formatClock(ms);
+    // In byōyomi, show the reserve period count so the clock reads e.g. "0:25 ×3".
+    if (this.timeControl === 'byoyomi' && periods !== null && periods > 0) {
+      text += ` ×${periods}`;
+    }
+    el.textContent = text;
     el.classList.toggle('go3d-clock-active',  active);
     el.classList.toggle('go3d-clock-urgent',  ms !== null && ms <= 30_000);
     el.classList.toggle('go3d-clock-flagged', ms !== null && ms <= 0);

@@ -155,6 +155,7 @@ export class Lobby {
     });
 
     document.getElementById('go3d-refresh-open')!.addEventListener('click', () => void this.loadOpenGames());
+    document.getElementById('go3d-refresh-leaderboard')?.addEventListener('click', () => void this.loadLeaderboard());
 
     // New game form: show/hide time settings
     const tcSel = document.getElementById('go3d-time-control-select') as HTMLSelectElement;
@@ -174,6 +175,8 @@ export class Lobby {
     const sphereWrap = document.getElementById('go3d-sphere-size-wrap')!;
     const sphereSel  = document.getElementById('go3d-sphere-size')   as HTMLSelectElement;
     const sphereFreq = document.getElementById('go3d-sphere-freq')   as HTMLInputElement;
+    const cubeSel    = document.getElementById('go3d-cube-size')     as HTMLSelectElement;
+    const cubeCustom = document.getElementById('go3d-cube-custom')   as HTMLInputElement;
     modeSel.addEventListener('change', () => {
       const isSphere = modeSel.value === 'sphere';
       cubeWrap.style.display   = isSphere ? 'none' : '';
@@ -182,6 +185,18 @@ export class Lobby {
     sphereSel.addEventListener('change', () => {
       sphereFreq.style.display = sphereSel.value === 'custom' ? '' : 'none';
     });
+    cubeSel.addEventListener('change', () => {
+      cubeCustom.style.display = cubeSel.value === 'custom' ? '' : 'none';
+    });
+    // Live-clamp the custom size inputs to their valid range so a typed value
+    // can never exceed the max (cube 2–19, sphere frequency 2–8).
+    const clampInput = (el: HTMLInputElement, lo: number, hi: number) => () => {
+      const v = Number(el.value);
+      if (Number.isFinite(v) && v > hi) el.value = String(hi);
+      else if (Number.isFinite(v) && v < lo && el.value !== '') el.value = String(lo);
+    };
+    cubeCustom.addEventListener('change', clampInput(cubeCustom, 2, 19));
+    sphereFreq.addEventListener('change', clampInput(sphereFreq, 2, 8));
 
     document.getElementById('go3d-new-game-form')!.addEventListener('submit', async e => {
       e.preventDefault();
@@ -190,13 +205,17 @@ export class Lobby {
       const tc        = fd.get('time_control') as string;
       const mode      = fd.get('mode') as string;
       // Sphere games store the geodesic frequency in board_size; cube/stack use
-      // the lattice edge length. The sphere size lives outside the form (no
-      // name attr) so we read it directly.
-      let boardSize = Number(fd.get('board_size'));
+      // the lattice edge length. Both size selectors live outside the form (no
+      // name attr) so we read them directly, resolving the "custom" preset.
+      let boardSize: number;
       if (mode === 'sphere') {
         boardSize = sphereSel.value === 'custom'
           ? Math.max(2, Math.min(8, Number(sphereFreq.value)))
           : Number(sphereSel.value);
+      } else {
+        boardSize = cubeSel.value === 'custom'
+          ? Math.max(2, Math.min(19, Number(cubeCustom.value)))
+          : Number(cubeSel.value);
       }
       const settings: Record<string, unknown> = {
         board_size:   boardSize,
@@ -242,7 +261,42 @@ export class Lobby {
     document.getElementById('go3d-lobby-elo')!.textContent      = String(user.elo);
 
     setScreen('lobby');
-    await Promise.all([this.loadOpenGames(), this.loadActiveGames()]);
+    await Promise.all([this.loadOpenGames(), this.loadActiveGames(), this.loadLeaderboard()]);
+  }
+
+  private async loadLeaderboard(): Promise<void> {
+    const tbody = document.querySelector<HTMLTableSectionElement>('#go3d-leaderboard-table tbody');
+    const empty = document.getElementById('go3d-no-leaderboard');
+    if (!tbody || !empty) return;
+    try {
+      const { players } = await Users.leaderboard(20);
+      tbody.innerHTML = '';
+      if (players.length === 0) {
+        empty.style.display = '';
+        empty.textContent = 'No ranked players yet.';
+        return;
+      }
+      empty.style.display = 'none';
+      const myId = AuthState.user?.id;
+      players.forEach((p, i) => {
+        const tr = document.createElement('tr');
+        if (p.id === myId) tr.className = 'go3d-row-me';
+        tr.innerHTML = `
+          <td>${i + 1}</td>
+          <td><a href="#" class="go3d-lb-name" data-id="${p.id}">${escHtml(p.username)}</a></td>
+          <td>${p.elo}</td>
+          <td>${p.wins}</td>
+          <td>${p.losses}</td>
+          <td>${p.draws}</td>`;
+        tbody.appendChild(tr);
+      });
+      tbody.querySelectorAll<HTMLAnchorElement>('.go3d-lb-name').forEach(a => {
+        a.addEventListener('click', e => { e.preventDefault(); this.showProfile(Number(a.dataset.id)); });
+      });
+    } catch {
+      empty.style.display = '';
+      empty.textContent = 'Could not load the leaderboard.';
+    }
   }
 
   showProfile(userId: number): void {
@@ -350,7 +404,13 @@ export class Lobby {
         const won  = g.winner_id === userId;
         const lost = g.winner_id !== null && g.winner_id !== userId;
         const badge = won ? '✓ Win' : lost ? '✗ Loss' : '— Draw';
-        return `<tr><td>${boardLabel(g)}</td><td>${escHtml(g.scoring_mode)}</td><td>${badge}</td><td>${escHtml(String(g.elo_change_p1 ?? g.elo_change_p2 ?? ''))}</td></tr>`;
+        // Show the ELO delta from THIS profile's perspective: pick p1's or p2's
+        // change depending on which slot this user occupied in that game.
+        const delta = g.player1_id === userId ? g.elo_change_p1 : g.elo_change_p2;
+        const deltaStr = delta === null || delta === undefined
+          ? ''
+          : (delta > 0 ? `+${delta}` : String(delta));
+        return `<tr><td>${boardLabel(g)}</td><td>${escHtml(g.scoring_mode)}</td><td>${badge}</td><td>${escHtml(deltaStr)}</td></tr>`;
       }).join('');
 
       content.innerHTML = `
@@ -451,7 +511,12 @@ export function showToast(msg: string, type: 'info' | 'success' | 'error' = 'inf
 }
 
 function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /** Compact board descriptor combining mode + size, e.g. "9³", "9³ stack", "Sphere 92". */

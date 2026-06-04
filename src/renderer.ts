@@ -599,6 +599,21 @@ export class Renderer {
     const camAlong = this.sliceAxis === 'x' ? cam.x
                    : this.sliceAxis === 'y' ? cam.y
                    : this.sliceAxis === 'z' ? cam.z : 0;
+    // How face-on is the slice? Compare the view direction (camera → orbit
+    // target) against the slice axis. |alignment| is 1 when looking straight
+    // through the slice (the near side fully occludes it) and ~0 when the slice
+    // is viewed edge-on (the "near" side is off to the side and occludes
+    // nothing, so it should not be dimmed). This makes the dim strength track
+    // which side is actually more in view.
+    let sliceAlign = 0;
+    if (this.sliceAxis !== 'none') {
+      const t = this.controls.target;
+      let vx = t.x - cam.x, vy = t.y - cam.y, vz = t.z - cam.z;
+      const vlen = Math.sqrt(vx*vx + vy*vy + vz*vz) || 1;
+      const viewAlong = this.sliceAxis === 'x' ? vx
+                      : this.sliceAxis === 'y' ? vy : vz;
+      sliceAlign = Math.abs(viewAlong / vlen);
+    }
     let bi = 0, wi = 0;
     for (const { x, y, z, player } of this.stoneEntries) {
       const wx = this.coord(x), wy = this.coord(y), wz = this.coord(z);
@@ -615,7 +630,9 @@ export class Renderer {
           // interior is visible; keep stones behind the slice opaque.
           const along = this.sliceAxis === 'x' ? wx : this.sliceAxis === 'y' ? wy : wz;
           const inFront = (along - slicePlane) * (camAlong - slicePlane) > 0;
-          if (inFront) alpha = 0.08;
+          // Only fade the near side in proportion to how much it occludes the
+          // slice: full transparency when looking face-on, none when edge-on.
+          if (inFront) alpha = 1 - (1 - 0.08) * sliceAlign;
         }
       } else if (this.cursorActive && y !== this.cursorPos.y) {
         brightness *= 0.4;

@@ -232,6 +232,75 @@
   letter-spacing: 0.04em;
 }
 
+/* ── Capture counts + active-player glow ─────────────────────────────────── */
+.go3d-cap-count {
+  font-size: 0.78rem; font-variant-numeric: tabular-nums;
+  color: var(--go3d-green); letter-spacing: 0.02em;
+}
+.go3d-player-badge.go3d-badge-active {
+  box-shadow: 0 0 0 1px var(--go3d-cyan), 0 0 12px rgba(0, 229, 255, 0.45);
+  border-radius: 8px; padding: 0.15rem 0.45rem;
+}
+
+/* ── View controls (slice / camera / score) ──────────────────────────────── */
+#go3d-view-controls {
+  position: absolute; top: 4.2rem; right: 1rem;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem;
+  z-index: 20;
+}
+.go3d-vc-group {
+  display: flex; align-items: center; gap: 0.3rem;
+  background: rgba(5, 6, 10, 0.7); border: 1px solid var(--go3d-border);
+  border-radius: 8px; padding: 0.25rem 0.4rem;
+}
+.go3d-vc-label { font-size: 0.7rem; color: var(--go3d-muted); text-transform: uppercase; }
+.go3d-btn-ghost.go3d-vc-on {
+  border-color: var(--go3d-cyan); color: var(--go3d-cyan);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
+}
+
+/* ── Stack-mode layer banner ─────────────────────────────────────────────── */
+#go3d-layer-banner {
+  position: absolute; top: 4.2rem; left: 50%; transform: translateX(-50%);
+  background: rgba(5, 6, 10, 0.8); border: 1px solid var(--go3d-border);
+  border-radius: 8px; padding: 0.35rem 0.9rem; z-index: 20;
+  color: var(--go3d-cyan); font-size: 0.85rem; letter-spacing: 0.03em;
+}
+
+/* ── Replay bar ──────────────────────────────────────────────────────────── */
+#go3d-replay-bar {
+  position: absolute; bottom: 3.6rem; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 0.5rem;
+  background: rgba(5, 6, 10, 0.8); border: 1px solid var(--go3d-border);
+  border-radius: 10px; padding: 0.35rem 0.7rem; z-index: 20;
+}
+#go3d-replay-status { font-variant-numeric: tabular-nums; color: var(--go3d-muted); min-width: 4em; text-align: center; }
+
+/* ── Leaderboard ─────────────────────────────────────────────────────────── */
+#go3d-leaderboard-table .go3d-row-me { background: rgba(0, 229, 255, 0.08); }
+.go3d-lb-name { color: var(--go3d-cyan); text-decoration: none; }
+.go3d-lb-name:hover { text-decoration: underline; }
+
+/* ── Onboarding overlay ──────────────────────────────────────────────────── */
+#go3d-onboarding {
+  position: absolute; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(2, 4, 8, 0.82);
+}
+.go3d-onboarding-card {
+  max-width: 480px; width: 90%;
+  background: var(--go3d-panel); border: 1px solid var(--go3d-border);
+  border-radius: 12px; padding: 1.4rem 1.6rem;
+  box-shadow: 0 0 40px rgba(0, 229, 255, 0.15);
+}
+.go3d-onboarding-card h3 { margin: 0 0 0.8rem; color: var(--go3d-cyan); letter-spacing: 0.03em; }
+.go3d-onboarding-card ul { margin: 0 0 1.1rem; padding-left: 1.1rem; line-height: 1.55; }
+.go3d-onboarding-card li { margin-bottom: 0.45rem; }
+.go3d-onboarding-card kbd {
+  background: var(--go3d-bg); border: 1px solid var(--go3d-border);
+  border-radius: 4px; padding: 0.05rem 0.35rem; font-size: 0.8rem; color: var(--go3d-text);
+}
+
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 #go3d-toast {
   position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%) translateY(150%);

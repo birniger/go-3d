@@ -131,6 +131,11 @@ export interface GameState extends GameSummary {
   time_settings:       Record<string, unknown> | null;
   p1_time_ms:          number | null;
   p2_time_ms:          number | null;
+  // Byōyomi: reserve periods remaining per player (null for non-byōyomi games).
+  p1_periods?:         number | null;
+  p2_periods?:         number | null;
+  p1_in_byoyomi?:      boolean;
+  p2_in_byoyomi?:      boolean;
   consecutive_passes:  number;
   active_layer:        number;
   // Cube/stack: 3D lattice. Sphere: a flat node array (index = geodesic node).
@@ -166,6 +171,10 @@ export interface MovePayload {
   active_layer?: number;   // stack mode: present on 'layer-advance'
   p1_time_ms?:   number | null;
   p2_time_ms?:   number | null;
+  p1_periods?:   number | null;   // byōyomi: reserve periods remaining
+  p2_periods?:   number | null;
+  p1_in_byoyomi?: boolean;
+  p2_in_byoyomi?: boolean;
 }
 
 export interface GameOverPayload {

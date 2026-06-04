@@ -111,7 +111,9 @@ class Go3D_Notifications {
         $threshold_hours = (int)( $user['notify_idle_hours'] ?? 24 );
         if ( $threshold_hours <= 0 ) return; // notifications disabled
 
-        $idle_hours = ( time() - strtotime( $game['last_move_at'] ) ) / HOUR_IN_SECONDS;
+        // last_move_at is stored as a UTC 'mysql' datetime; strtotime() would
+        // otherwise read it in the server's local zone and skew the elapsed time.
+        $idle_hours = ( time() - strtotime( $game['last_move_at'] . ' UTC' ) ) / HOUR_IN_SECONDS;
         if ( $idle_hours < $threshold_hours ) return;
 
         $notif_key = "idle_$threshold_hours";
@@ -153,7 +155,8 @@ class Go3D_Notifications {
         $clock_ms = $current === 1 ? (int)$game['p1_time_ms'] : (int)$game['p2_time_ms'];
         if ( $clock_ms === null ) return;
 
-        $elapsed_ms  = ( time() - strtotime( $game['last_move_at'] ) ) * 1000;
+        // ' UTC' suffix: last_move_at is a UTC datetime, so parse it as UTC.
+        $elapsed_ms  = ( time() - strtotime( $game['last_move_at'] . ' UTC' ) ) * 1000;
         $remaining_ms = $clock_ms - $elapsed_ms;
 
         if ( $remaining_ms > $warn_mins * MINUTE_IN_SECONDS * 1000 ) return;

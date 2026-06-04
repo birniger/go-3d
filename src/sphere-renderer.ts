@@ -58,6 +58,9 @@ export class SphereRenderer {
 
   // Capture shrink animations
   private captureAnims: { mesh: THREE.Mesh; life: number }[] = [];
+  // Territory overlay (shown at game end). Tracked so it can be disposed.
+  private territoryMeshes: THREE.InstancedMesh[] = [];
+  private territoryGeo: THREE.BufferGeometry | null = null;
 
   private hoverPhase = 0;
   private _rafId = 0;
@@ -164,17 +167,31 @@ export class SphereRenderer {
     this.scene.add(new THREE.LineSegments(eGeo,
       new THREE.LineBasicMaterial({ color: 0x0aa6c8, transparent: true, opacity: 0.5 })));
 
-    // Node dots.
+    // Node valence — the 12 original icosahedron vertices have 5 neighbours
+    // (pentagons); every other node has 6 (hexagons). Mark the pentagons so
+    // players can orient themselves on the globe.
+    const valence = new Array<number>(geo.count).fill(0);
+    for (const [a, b] of geo.edges) { valence[a]++; valence[b]++; }
+
+    // Node dots — per-instance colour: amber for pentagons, cyan otherwise.
+    // Pentagons are drawn slightly larger so they read at a glance.
     this.nodeDots = new THREE.InstancedMesh(
       new THREE.SphereGeometry(this.stoneR * 0.28, 8, 8),
-      new THREE.MeshBasicMaterial({ color: 0x33d6ee }), geo.count);
+      new THREE.MeshBasicMaterial({ color: 0xffffff }), geo.count);
     const dummy = new THREE.Object3D();
+    const cyan = new THREE.Color(0x33d6ee);
+    const gold = new THREE.Color(0xffb020);
     for (let i = 0; i < geo.count; i++) {
+      const isPent = valence[i] === 5;
       dummy.position.copy(this.nodePos[i]);
+      dummy.scale.setScalar(isPent ? 1.8 : 1);
       dummy.updateMatrix();
       this.nodeDots.setMatrixAt(i, dummy.matrix);
+      this.nodeDots.setColorAt(i, isPent ? gold : cyan);
     }
+    dummy.scale.setScalar(1);
     this.nodeDots.instanceMatrix.needsUpdate = true;
+    if (this.nodeDots.instanceColor) this.nodeDots.instanceColor.needsUpdate = true;
     this.scene.add(this.nodeDots);
 
     // Invisible pick sphere at the exact node radius.
@@ -258,10 +275,14 @@ export class SphereRenderer {
 
   /** Animate captured stones shrinking out. Nodes are already cleared in board. */
   triggerCaptures(nodes: number[], player: 1 | 2): void {
-    const mat = (player === 1 ? this.whiteMat : this.blackMat).clone();
-    mat.transparent = true;
+    // Clone the base material once per captured stone (each animates its own
+    // opacity and is disposed when the animation ends — see animate()). The
+    // previous code cloned an extra template material that was never disposed.
+    const base = player === 1 ? this.whiteMat : this.blackMat;
     for (const n of nodes) {
-      const m = new THREE.Mesh(this.stoneGeo, mat.clone());
+      const mat = base.clone();
+      mat.transparent = true;
+      const m = new THREE.Mesh(this.stoneGeo, mat);
       const p = this.nodePos[n];
       m.position.copy(p); m.lookAt(p.clone().multiplyScalar(2));
       this.scene.add(m);
@@ -280,6 +301,10 @@ export class SphereRenderer {
 
   /** Highlight final territory: tint empty nodes by owner (1 black / 2 white). */
   showTerritory(map: Record<number, number>): void {
+    // Clear any previous territory overlay so repeated calls don't pile up
+    // orphaned GPU resources.
+    this.clearTerritory();
+
     const dummy = new THREE.Object3D();
     const bMat = new THREE.MeshStandardMaterial({ color: 0x001133, emissive: 0x0077ff, emissiveIntensity: 2.5, transparent: true, opacity: 0.9 });
     const wMat = new THREE.MeshStandardMaterial({ color: 0x280010, emissive: PINK, emissiveIntensity: 2.5, transparent: true, opacity: 0.9 });
@@ -291,13 +316,29 @@ export class SphereRenderer {
       if (owner === 1) bNodes.push(n); else if (owner === 2) wNodes.push(n);
     }
     const mk = (nodes: number[], m: THREE.Material) => {
-      if (!nodes.length) return;
+      if (!nodes.length) { m.dispose(); return; }
       const inst = new THREE.InstancedMesh(tGeo, m, nodes.length);
       nodes.forEach((n, i) => { dummy.position.copy(this.nodePos[n]); dummy.updateMatrix(); inst.setMatrixAt(i, dummy.matrix); });
       inst.instanceMatrix.needsUpdate = true;
       this.scene.add(inst);
+      this.territoryMeshes.push(inst);
     };
     mk(bNodes, bMat); mk(wNodes, wMat);
+    // tGeo is shared by both instanced meshes; keep a handle so clearTerritory
+    // can free it. Dispose immediately if nothing was rendered.
+    if (this.territoryMeshes.length) this.territoryGeo = tGeo;
+    else tGeo.dispose();
+  }
+
+  /** Remove and dispose the territory overlay (meshes, shared geometry, materials). */
+  clearTerritory(): void {
+    for (const inst of this.territoryMeshes) {
+      this.scene.remove(inst);
+      (inst.material as THREE.Material).dispose();
+      inst.dispose();
+    }
+    this.territoryMeshes = [];
+    if (this.territoryGeo) { this.territoryGeo.dispose(); this.territoryGeo = null; }
   }
 
   // ── Picking ─────────────────────────────────────────────────────────────────

@@ -23,6 +23,7 @@ foreach ( [
     'class-game-logic',
     'class-geodesic',
     'class-graph-logic',
+    'class-clock',
     'class-game',
     'class-elo',
     'class-pusher',
@@ -100,7 +101,9 @@ add_action( 'template_redirect', function () {
 add_action( 'template_redirect', function () {
     if ( isset( $_GET['go3d_cron'] ) ) {
         $secret = get_option( 'go3d_cron_secret', '' );
-        if ( $secret && ( $_GET['secret'] ?? '' ) !== $secret ) {
+        // Refuse to run unless a secret is configured — an unprotected
+        // endpoint would let anyone trigger cron work. Compare in constant time.
+        if ( ! is_string( $secret ) || $secret === '' || ! hash_equals( $secret, (string) ( $_GET['secret'] ?? '' ) ) ) {
             status_header( 403 );
             exit( 'Forbidden' );
         }
