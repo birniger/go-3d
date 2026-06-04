@@ -94,11 +94,14 @@ export interface User {
   last_seen_at: string | null;
 }
 
+export type GameMode = 'cube' | 'stack' | 'sphere';
+
 export interface GameSummary {
   id:              number;
   player1_id:      number;
   player2_id:      number | null;
   board_size:      number;
+  mode:            GameMode;
   scoring_mode:    string;
   komi:            number;
   time_control:    string;
@@ -122,6 +125,7 @@ export interface GameState extends GameSummary {
   p1_time_ms:          number | null;
   p2_time_ms:          number | null;
   consecutive_passes:  number;
+  active_layer:        number;
   board:               number[][][];
   moves:               MoveRecord[];
 }
@@ -191,6 +195,7 @@ export const Games = {
 
   create: (settings: {
     board_size?:    number;
+    mode?:          GameMode;
     scoring_mode?:  string;
     komi?:          number;
     time_control?:  string;

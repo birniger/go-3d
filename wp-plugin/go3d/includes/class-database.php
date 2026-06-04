@@ -3,7 +3,19 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 class Go3D_Database {
 
-    const DB_VERSION = '1.0';
+    const DB_VERSION = '1.1';
+
+    /**
+     * Run install() (dbDelta) whenever the stored schema version is behind the
+     * code. dbDelta diffs the CREATE TABLE statements and issues ALTER TABLE
+     * ADD COLUMN for any new columns, so existing installs pick up new fields
+     * (e.g. games.mode / games.active_layer) without a manual reinstall.
+     */
+    public static function maybe_upgrade(): void {
+        if ( get_option( 'go3d_db_version' ) !== self::DB_VERSION ) {
+            self::install();
+        }
+    }
 
     public static function install(): void {
         global $wpdb;
@@ -44,6 +56,8 @@ class Go3D_Database {
             player1_id        BIGINT(20)   NOT NULL,
             player2_id        BIGINT(20)            DEFAULT NULL,
             board_size        TINYINT(2)   NOT NULL DEFAULT 9,
+            mode              VARCHAR(8)   NOT NULL DEFAULT 'cube',
+            active_layer      TINYINT(2)   NOT NULL DEFAULT 0,
             scoring_mode      VARCHAR(12)  NOT NULL DEFAULT 'chinese',
             komi              DECIMAL(4,1) NOT NULL DEFAULT 6.5,
             time_control      VARCHAR(12)  NOT NULL DEFAULT 'none',
@@ -94,6 +108,7 @@ class Go3D_Database {
             challenger_id  BIGINT(20)   NOT NULL,
             challenged_id  BIGINT(20)            DEFAULT NULL,
             board_size     TINYINT(2)   NOT NULL DEFAULT 9,
+            mode           VARCHAR(8)   NOT NULL DEFAULT 'cube',
             scoring_mode   VARCHAR(12)  NOT NULL DEFAULT 'chinese',
             komi           DECIMAL(4,1) NOT NULL DEFAULT 6.5,
             time_control   VARCHAR(12)  NOT NULL DEFAULT 'none',

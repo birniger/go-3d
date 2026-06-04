@@ -61,6 +61,13 @@
         <h3>New game</h3>
         <form id="go3d-new-game-form" class="go3d-form">
           <div class="go3d-form-row">
+            <label>Mode
+              <select name="mode" id="go3d-mode-select">
+                <option value="cube" selected>Cube</option>
+                <option value="stack">Stack</option>
+                <option value="sphere">Sphere</option>
+              </select>
+            </label>
             <label>Board size
               <select name="board_size">
                 <option value="9" selected>9×9×9</option>

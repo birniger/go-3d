@@ -18,6 +18,7 @@ class Go3D_Game {
         $t = $wpdb->prefix . 'go3d_games';
 
         $board_size   = in_array( (int)($settings['board_size']   ?? 9), [4,5,7,9,13], true ) ? (int)$settings['board_size']   : 9;
+        $mode         = in_array( $settings['mode'] ?? '', ['cube','stack','sphere'], true ) ? $settings['mode'] : 'cube';
         $scoring_mode = in_array( $settings['scoring_mode'] ?? '', ['chinese','japanese'],      true ) ? $settings['scoring_mode']      : 'chinese';
         $komi         = (float)( $settings['komi']         ?? 6.5 );
         $time_control = in_array( $settings['time_control'] ?? '', ['none','absolute','byoyomi','fischer'], true ) ? $settings['time_control'] : 'none';
@@ -49,6 +50,8 @@ class Go3D_Game {
         $wpdb->insert( $t, [
             'player1_id'       => $player1_id,
             'board_size'       => $board_size,
+            'mode'             => $mode,
+            'active_layer'     => 0,
             'scoring_mode'     => $scoring_mode,
             'komi'             => $komi,
             'time_control'     => $time_control,
@@ -466,6 +469,8 @@ class Go3D_Game {
             'player1_id'         => (int)$game['player1_id'],
             'player2_id'         => $game['player2_id'] ? (int)$game['player2_id'] : null,
             'board_size'         => (int)$game['board_size'],
+            'mode'               => $game['mode'] ?? 'cube',
+            'active_layer'       => isset( $game['active_layer'] ) ? (int)$game['active_layer'] : 0,
             'scoring_mode'       => $game['scoring_mode'],
             'komi'               => (float)$game['komi'],
             'time_control'       => $game['time_control'],
@@ -501,7 +506,7 @@ class Go3D_Game {
 
         $status_sql = $wpdb->prepare( 'g.status = %s', $status );
         $rows = $wpdb->get_results( $wpdb->prepare(
-            "SELECT g.id, g.player1_id, g.player2_id, g.board_size, g.scoring_mode, g.komi,
+            "SELECT g.id, g.player1_id, g.player2_id, g.board_size, g.mode, g.scoring_mode, g.komi,
                     g.time_control, g.current_player, g.status, g.winner_id, g.end_reason,
                     g.p1_score, g.p2_score, g.elo_change_p1, g.elo_change_p2,
                     g.created_at, g.last_move_at, g.finished_at,
@@ -527,7 +532,7 @@ class Go3D_Game {
         $t = $wpdb->prefix . 'go3d_games';
         $u = $wpdb->prefix . 'go3d_users';
         return $wpdb->get_results( $wpdb->prepare(
-            "SELECT g.id, g.player1_id, g.board_size, g.scoring_mode, g.komi, g.time_control, g.created_at,
+            "SELECT g.id, g.player1_id, g.board_size, g.mode, g.scoring_mode, g.komi, g.time_control, g.created_at,
                     u1.username AS player1_name
              FROM $t g
              LEFT JOIN $u u1 ON u1.id = g.player1_id

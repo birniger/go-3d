@@ -80,6 +80,7 @@ class Go3D_API_Games {
 
         $settings = [
             'board_size'   => $req->get_param( 'board_size' )   ?? 9,
+            'mode'         => $req->get_param( 'mode' )          ?? 'cube',
             'scoring_mode' => $req->get_param( 'scoring_mode' ) ?? 'chinese',
             'komi'         => $req->get_param( 'komi' )         ?? 6.5,
             'time_control' => $req->get_param( 'time_control' ) ?? 'none',

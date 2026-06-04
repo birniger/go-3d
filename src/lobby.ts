@@ -174,6 +174,7 @@ export class Lobby {
       const tc        = fd.get('time_control') as string;
       const settings: Record<string, unknown> = {
         board_size:   Number(fd.get('board_size')),
+        mode:         fd.get('mode'),
         scoring_mode: fd.get('scoring_mode'),
         komi:         Number(fd.get('komi')),
         time_control: tc,
@@ -240,7 +241,7 @@ export class Lobby {
           const tr = document.createElement('tr');
           tr.innerHTML = `
             <td>${escHtml(g.player1_name ?? `Player ${g.player1_id}`)}</td>
-            <td>${g.board_size}³</td>
+            <td>${boardLabel(g)}</td>
             <td>${escHtml(g.scoring_mode)}</td>
             <td>${g.komi}</td>
             <td>${escHtml(g.time_control)}</td>
@@ -291,7 +292,7 @@ export class Lobby {
           const tr = document.createElement('tr');
           tr.innerHTML = `
             <td>${escHtml(oppLabel)}</td>
-            <td>${g.board_size}³</td>
+            <td>${boardLabel(g)}</td>
             <td>${myTurn ? '<span class="go3d-chip go3d-chip-green">Your turn</span>' : '—'}</td>
             <td>${escHtml(lastMove)}</td>
             <td><button class="go3d-btn-primary go3d-btn-sm go3d-open-game-btn" data-id="${g.id}">Play</button></td>`;
@@ -323,7 +324,7 @@ export class Lobby {
         const won  = g.winner_id === userId;
         const lost = g.winner_id !== null && g.winner_id !== userId;
         const badge = won ? '✓ Win' : lost ? '✗ Loss' : '— Draw';
-        return `<tr><td>${g.board_size}³</td><td>${escHtml(g.scoring_mode)}</td><td>${badge}</td><td>${escHtml(String(g.elo_change_p1 ?? g.elo_change_p2 ?? ''))}</td></tr>`;
+        return `<tr><td>${boardLabel(g)}</td><td>${escHtml(g.scoring_mode)}</td><td>${badge}</td><td>${escHtml(String(g.elo_change_p1 ?? g.elo_change_p2 ?? ''))}</td></tr>`;
       }).join('');
 
       content.innerHTML = `
@@ -425,4 +426,12 @@ export function showToast(msg: string, type: 'info' | 'success' | 'error' = 'inf
 
 function escHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** Compact board descriptor combining mode + size, e.g. "9³", "9³ stack", "Sphere 5". */
+function boardLabel(g: GameSummary): string {
+  const mode = g.mode ?? 'cube';
+  if (mode === 'sphere') return `Sphere ${g.board_size}`;
+  if (mode === 'stack')  return `${g.board_size}³ <span class="go3d-chip">stack</span>`;
+  return `${g.board_size}³`;
 }

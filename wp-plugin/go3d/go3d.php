@@ -58,8 +58,10 @@ add_action( 'go3d_hourly_notifications', function () {
     Go3D_Game::process_timeouts();
 } );
 
-// Reschedule on every load in case the option was cleared
+// Reschedule on every load in case the option was cleared, and run any
+// pending DB schema upgrade (adds new columns to existing installs).
 add_action( 'plugins_loaded', function () {
+    Go3D_Database::maybe_upgrade();
     if ( ! wp_next_scheduled( 'go3d_hourly_notifications' ) ) {
         wp_schedule_event( time(), 'hourly', 'go3d_hourly_notifications' );
     }
