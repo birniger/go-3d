@@ -315,9 +315,9 @@
     <div id="go3d-view-controls">
       <div class="go3d-vc-group" id="go3d-slice-group">
         <span class="go3d-vc-label">Slice</span>
-        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-x" title="Slice along X (key: X)">X</button>
-        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-y" title="Slice along Y (key: Y)">Y</button>
-        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-z" title="Slice along Z (key: Z)">Z</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-x" title="Slice along X (key: X) — step with ← / →">X</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-y" title="Slice along Y (key: Y) — step with Q / E">Y</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-slice-z" title="Slice along Z (key: Z) — step with ↑ / ↓">Z</button>
       </div>
       <div class="go3d-vc-group" id="go3d-camera-group">
         <span class="go3d-vc-label">View</span>
@@ -355,8 +355,8 @@
         <h3>Welcome to Go³D</h3>
         <ul>
           <li><strong>Place a stone:</strong> click an empty point on the board.</li>
-          <li><strong>See inside (cube/stack):</strong> press <kbd>X</kbd>/<kbd>Y</kbd>/<kbd>Z</kbd> or the <em>Slice</em> buttons, then arrow keys to move the slice.</li>
-          <li><strong>Keyboard cursor:</strong> arrow keys move a cursor; <kbd>Enter</kbd> places. <kbd>Q</kbd>/<kbd>E</kbd> move on the vertical axis.</li>
+          <li><strong>See inside (cube/stack):</strong> press <kbd>X</kbd>/<kbd>Y</kbd>/<kbd>Z</kbd> (or the <em>Slice</em> buttons) to cut a layer, then step it: <kbd>X</kbd> slice with <kbd>←</kbd>/<kbd>→</kbd>, <kbd>Z</kbd> slice with <kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Y</kbd> slice with <kbd>Q</kbd>/<kbd>E</kbd>. <kbd>Esc</kbd> exits.</li>
+          <li><strong>Keyboard cursor (no slice):</strong> arrow keys move a cursor; <kbd>Q</kbd>/<kbd>E</kbd> move up/down the vertical axis; <kbd>Enter</kbd> places a stone.</li>
           <li><strong>Snap the camera:</strong> use the <em>View</em> buttons (Top / Front / Side / Iso).</li>
           <li><strong>Score:</strong> the <em>Score</em> button shades estimated territory.</li>
         </ul>

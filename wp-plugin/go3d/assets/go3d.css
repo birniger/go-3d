@@ -223,8 +223,10 @@
 /* ── Game screen ─────────────────────────────────────────────────────────── */
 #go3d-game-screen { position: fixed; inset: 0; z-index: 99999; pointer-events: none; }
 #go3d-game-screen > * { pointer-events: auto; }
-/* The WebGL canvas is appended to <body>; sit it behind the overlay UI. */
-#go3d-game-screen canvas, body > canvas { z-index: 1; }
+/* The WebGL canvas is appended to <body>; pin it to the viewport and sit it
+   behind the overlay UI. `position: fixed` is required — without it the canvas
+   flows after page content (e.g. a 100vh standalone shell) and lands off-screen. */
+#go3d-game-screen canvas, body > canvas { position: fixed; inset: 0; z-index: 1; }
 
 #go3d-game-topbar {
   position: absolute; top: 0; left: 0; right: 0;
