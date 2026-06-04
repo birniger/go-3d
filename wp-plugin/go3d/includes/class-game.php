@@ -409,7 +409,8 @@ class Go3D_Game {
             'move_number' => $move_number,
             'player_slot' => $player_slot,
             'x'           => $node,
-            'captured'    => $result['captured'],   // flat node indices
+            'captured'    => $result['captured'],   // flat node indices (for the capture animation)
+            'board'       => $result['board'],      // authoritative flat board (client has no engine)
             'next_player' => $next_player,
             'p1_time_ms'  => $p1_time_ms,
             'p2_time_ms'  => $p2_time_ms,

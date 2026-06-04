@@ -167,14 +167,40 @@ export class Lobby {
       fDiv.style.display  = tcSel.value === 'fischer'  ? '' : 'none';
     });
 
+    // Mode selector: cube/stack use the cube size dropdown; sphere swaps in the
+    // geodesic size selector (presets + a custom frequency input).
+    const modeSel    = document.getElementById('go3d-mode-select')   as HTMLSelectElement;
+    const cubeWrap   = document.getElementById('go3d-cube-size-wrap')!;
+    const sphereWrap = document.getElementById('go3d-sphere-size-wrap')!;
+    const sphereSel  = document.getElementById('go3d-sphere-size')   as HTMLSelectElement;
+    const sphereFreq = document.getElementById('go3d-sphere-freq')   as HTMLInputElement;
+    modeSel.addEventListener('change', () => {
+      const isSphere = modeSel.value === 'sphere';
+      cubeWrap.style.display   = isSphere ? 'none' : '';
+      sphereWrap.style.display = isSphere ? '' : 'none';
+    });
+    sphereSel.addEventListener('change', () => {
+      sphereFreq.style.display = sphereSel.value === 'custom' ? '' : 'none';
+    });
+
     document.getElementById('go3d-new-game-form')!.addEventListener('submit', async e => {
       e.preventDefault();
       const form      = e.currentTarget as HTMLFormElement;
       const fd        = new FormData(form);
       const tc        = fd.get('time_control') as string;
+      const mode      = fd.get('mode') as string;
+      // Sphere games store the geodesic frequency in board_size; cube/stack use
+      // the lattice edge length. The sphere size lives outside the form (no
+      // name attr) so we read it directly.
+      let boardSize = Number(fd.get('board_size'));
+      if (mode === 'sphere') {
+        boardSize = sphereSel.value === 'custom'
+          ? Math.max(2, Math.min(8, Number(sphereFreq.value)))
+          : Number(sphereSel.value);
+      }
       const settings: Record<string, unknown> = {
-        board_size:   Number(fd.get('board_size')),
-        mode:         fd.get('mode'),
+        board_size:   boardSize,
+        mode,
         scoring_mode: fd.get('scoring_mode'),
         komi:         Number(fd.get('komi')),
         time_control: tc,
@@ -428,10 +454,11 @@ function escHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/** Compact board descriptor combining mode + size, e.g. "9³", "9³ stack", "Sphere 5". */
+/** Compact board descriptor combining mode + size, e.g. "9³", "9³ stack", "Sphere 92". */
 function boardLabel(g: GameSummary): string {
   const mode = g.mode ?? 'cube';
-  if (mode === 'sphere') return `Sphere ${g.board_size}`;
+  // Sphere board_size is the geodesic frequency f; point count is 10·f² + 2.
+  if (mode === 'sphere') return `Sphere ${10 * g.board_size * g.board_size + 2} <span class="go3d-chip">sphere</span>`;
   if (mode === 'stack')  return `${g.board_size}³ <span class="go3d-chip">stack</span>`;
   return `${g.board_size}³`;
 }

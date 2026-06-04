@@ -17,7 +17,7 @@ const STONE_R     = 0.22;
 const TERRITORY_R = 0.11;
 
 // ── Sounds ────────────────────────────────────────────────────────────────────
-class SoundSystem {
+export class SoundSystem {
   private ctx: AudioContext | null = null;
   private get ac(): AudioContext {
     if (!this.ctx) this.ctx = new AudioContext();

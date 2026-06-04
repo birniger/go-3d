@@ -68,14 +68,23 @@
                 <option value="sphere">Sphere</option>
               </select>
             </label>
-            <label>Board size
-              <select name="board_size">
+            <label id="go3d-cube-size-wrap">Board size
+              <select name="board_size" id="go3d-cube-size">
                 <option value="9" selected>9×9×9</option>
                 <option value="7">7×7×7</option>
                 <option value="5">5×5×5</option>
                 <option value="4">4×4×4</option>
                 <option value="13">13×13×13</option>
               </select>
+            </label>
+            <label id="go3d-sphere-size-wrap" style="display:none;">Sphere size
+              <select id="go3d-sphere-size">
+                <option value="2">Small (42 points)</option>
+                <option value="3" selected>Medium (92 points)</option>
+                <option value="4">Large (162 points)</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <input type="number" id="go3d-sphere-freq" value="5" min="2" max="8" step="1" style="width:4em;display:none;" title="Geodesic frequency (2–8)">
             </label>
             <label>Scoring
               <select name="scoring_mode">

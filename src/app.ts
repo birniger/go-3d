@@ -15,6 +15,7 @@ import { Lobby, showToast, Screen } from './lobby';
 import { Games, Users, GameState, MovePayload, GameOverPayload } from './api';
 import { Go3D } from './game';
 import { Renderer } from './renderer';
+import { SphereRenderer } from './sphere-renderer';
 import {
   MultiplayerController,
   MultiplayerCallbacks,
@@ -242,11 +243,210 @@ class GameSession {
   }
 }
 
+// ── Sphere game session ─────────────────────────────────────────────────────
+
+/**
+ * Sphere-mode session. Mirrors GameSession but owns NO Go engine: the server is
+ * authoritative for the geodesic graph and the board. Each move payload carries
+ * the full flat board, which we hand straight to the SphereRenderer.
+ */
+class SphereGameSession {
+  private renderer: SphereRenderer;
+  private controller: MultiplayerController;
+  private clockDisplay: MultiplayerClockDisplay;
+
+  private board: number[];
+  private appliedMoves = 0;
+  private currentTurn: 1 | 2;
+  private finished = false;
+
+  /** Node adjacency derived from edges — used only for the end-game territory overlay. */
+  private adjacency: number[][];
+
+  constructor(private state: GameState, private onExit: () => void) {
+    if (!state.geometry) throw new Error('Sphere game has no geometry.');
+    this.board       = (state.board as number[]).slice();
+    this.currentTurn = state.current_player as 1 | 2;
+    this.adjacency   = this.buildAdjacency(state.geometry.count, state.geometry.edges);
+
+    this.renderer = new SphereRenderer(state.geometry, this.board, (node) => void this.doLocalPlace(node));
+    this.renderer.setCurrentPlayer(this.currentTurn);
+
+    this.clockDisplay = new MultiplayerClockDisplay();
+    this.clockDisplay.init(state.time_control, this.currentTurn, state.p1_time_ms, state.p2_time_ms);
+
+    const callbacks: MultiplayerCallbacks = {
+      onMove:         p  => this.applyMove(p),
+      onGameOver:     p  => this.handleGameOver(p),
+      onPlayerJoined: () => { showToast('Your opponent has joined!', 'success'); this.refreshTurnUI(); },
+      onError:        m  => showToast(m, 'error'),
+      onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
+    };
+    this.controller = new MultiplayerController(state, callbacks);
+    this.controller.connect();
+
+    this.bindButtons();
+    this.fillPlayerBar();
+    this.refreshTurnUI();
+  }
+
+  private get mySlot(): 1 | 2 { return this.controller.mySlot; }
+
+  private buildAdjacency(count: number, edges: [number, number][]): number[][] {
+    const adj: number[][] = Array.from({ length: count }, () => []);
+    for (const [a, b] of edges) { adj[a].push(b); adj[b].push(a); }
+    return adj;
+  }
+
+  private async doLocalPlace(node: number): Promise<void> {
+    if (this.finished) return;
+    if (this.state.status !== 'active') { showToast('Waiting for an opponent to join.', 'info'); return; }
+    if (this.currentTurn !== this.mySlot) { this.renderer.forbiddenFlash(node); return; }
+    try {
+      const payload = await this.controller.submitPlace(node);
+      if (payload) this.applyMove(payload);
+    } catch {
+      this.renderer.forbiddenFlash(node);
+    }
+  }
+
+  private async doPass(): Promise<void> {
+    if (this.finished || this.currentTurn !== this.mySlot) return;
+    try {
+      const payload = await this.controller.submitPass();
+      if (payload) this.applyMove(payload);
+    } catch { /* surfaced via onError */ }
+  }
+
+  private async doResign(): Promise<void> {
+    if (this.finished) return;
+    if (!confirm('Resign this game?')) return;
+    try { await this.controller.submitResign(); } catch { /* surfaced via onError */ }
+  }
+
+  private applyMove(p: MovePayload): void {
+    if (p.move_number <= this.appliedMoves) return;
+    this.appliedMoves = p.move_number;
+
+    if (p.type === 'place' && p.x !== undefined) {
+      const captured = (p.captured as number[] | undefined) ?? [];
+      if (p.board) { this.board = p.board.slice(); this.renderer.setBoard(this.board); }
+      this.renderer.playPlaceSound();
+      if (captured.length > 0) {
+        this.renderer.triggerCaptures(captured, p.player_slot as 1 | 2);
+        this.renderer.playCaptureSound(captured.length);
+      }
+      this.renderer.markLastMove(p.x);
+    } else if (p.type === 'pass') {
+      this.renderer.playPassSound();
+      showToast(p.player_slot === this.mySlot ? 'You passed.' : 'Opponent passed.', 'info');
+    }
+
+    this.currentTurn = p.next_player as 1 | 2;
+    this.renderer.setCurrentPlayer(this.currentTurn);
+    if (p.p1_time_ms !== undefined || p.p2_time_ms !== undefined) {
+      this.clockDisplay.update(this.currentTurn, p.p1_time_ms ?? null, p.p2_time_ms ?? null);
+    }
+    this.refreshTurnUI();
+  }
+
+  private handleGameOver(p: GameOverPayload): void {
+    this.finished = true;
+    this.renderer.setInteractive(false);
+    const myId = AuthState.user?.id ?? -1;
+    let msg: string;
+    if (p.winner_id === null)      msg = 'Game over — draw.';
+    else if (p.winner_id === myId) msg = 'You won! 🎉';
+    else                           msg = 'You lost.';
+
+    const reason = p.end_reason ? ` (${p.end_reason.replace(/_/g, ' ')})` : '';
+    if (p.p1_score !== null && p.p2_score !== null) {
+      msg += `  Score — Black ${p.p1_score} : White ${p.p2_score}.`;
+    }
+    showToast(msg + reason, p.winner_id === myId ? 'success' : 'info');
+
+    const ind = document.getElementById('go3d-turn-indicator');
+    if (ind) ind.textContent = 'Game over';
+    const overlay = document.getElementById('go3d-waiting-overlay');
+    if (overlay) overlay.style.display = 'none';
+
+    this.renderer.showTerritory(this.computeTerritory());
+  }
+
+  /** Flood-fill empty regions on the graph; region bordered by one colour = its territory. */
+  private computeTerritory(): Record<number, number> {
+    const map: Record<number, number> = {};
+    const seen = new Set<number>();
+    for (let n = 0; n < this.board.length; n++) {
+      if (this.board[n] !== 0 || seen.has(n)) continue;
+      const region: number[] = [];
+      const borders = new Set<number>();
+      const stack = [n];
+      while (stack.length) {
+        const c = stack.pop()!;
+        if (seen.has(c)) continue;
+        seen.add(c); region.push(c);
+        for (const nb of this.adjacency[c]) {
+          if (this.board[nb] === 0) { if (!seen.has(nb)) stack.push(nb); }
+          else borders.add(this.board[nb]);
+        }
+      }
+      const owner = borders.size === 1 ? [...borders][0] : 0;
+      if (owner) for (const r of region) map[r] = owner;
+    }
+    return map;
+  }
+
+  private refreshTurnUI(): void {
+    if (this.finished) return;
+    const myTurn  = this.currentTurn === this.mySlot;
+    const waiting = this.state.status !== 'active';
+    const ind = document.getElementById('go3d-turn-indicator');
+    if (ind) ind.textContent = waiting ? 'Waiting for opponent…' : (myTurn ? 'Your move' : "Opponent's move");
+    const overlay = document.getElementById('go3d-waiting-overlay');
+    if (overlay) overlay.style.display = (!waiting && !myTurn) ? '' : (waiting ? '' : 'none');
+    const pass   = document.getElementById('go3d-pass-btn')   as HTMLButtonElement | null;
+    const resign = document.getElementById('go3d-resign-btn') as HTMLButtonElement | null;
+    if (pass)   pass.disabled   = !myTurn || waiting;
+    if (resign) resign.disabled = waiting;
+  }
+
+  private bindButtons(): void {
+    document.getElementById('go3d-pass-btn')!.onclick   = () => void this.doPass();
+    document.getElementById('go3d-resign-btn')!.onclick = () => void this.doResign();
+    document.getElementById('go3d-back-to-lobby-game')!.onclick = () => this.exit();
+  }
+
+  private fillPlayerBar(): void {
+    const set = (slot: 1 | 2, name: string, elo?: number) => {
+      const n = document.getElementById(`go3d-p${slot}-name`);
+      const e = document.getElementById(`go3d-p${slot}-elo`);
+      if (n) n.textContent = name;
+      if (e) e.textContent = elo !== undefined ? String(elo) : '';
+    };
+    set(1, `Player ${this.state.player1_id}`);
+    set(2, this.state.player2_id ? `Player ${this.state.player2_id}` : '(waiting)');
+    void Users.getProfile(this.state.player1_id)
+      .then(r => set(1, r.user.username, r.user.elo)).catch(() => {});
+    if (this.state.player2_id) {
+      void Users.getProfile(this.state.player2_id)
+        .then(r => set(2, r.user.username, r.user.elo)).catch(() => {});
+    }
+  }
+
+  private exit(): void { this.dispose(); this.onExit(); }
+
+  dispose(): void {
+    this.controller.disconnect();
+    this.renderer.dispose();
+  }
+}
+
 // ── App bootstrap ───────────────────────────────────────────────────────────
 
 class App {
   private lobby: Lobby;
-  private session: GameSession | null = null;
+  private session: GameSession | SphereGameSession | null = null;
 
   constructor() {
     this.lobby = new Lobby((screen, data) => this.onScreenChange(screen, data));
@@ -274,10 +474,10 @@ class App {
     });
     try {
       const state = await Games.get(gameId);
-      this.session = new GameSession(state, () => {
-        this.session = null;
-        void this.lobby.showLobby();
-      });
+      const onExit = () => { this.session = null; void this.lobby.showLobby(); };
+      this.session = state.mode === 'sphere'
+        ? new SphereGameSession(state, onExit)
+        : new GameSession(state, onExit);
     } catch {
       showToast('Could not load that game.', 'error');
       void this.lobby.showLobby();

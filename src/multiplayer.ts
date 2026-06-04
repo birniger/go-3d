@@ -107,10 +107,16 @@ export class MultiplayerController {
 
   // ── Move submission ───────────────────────────────────────────────────────
 
-  async submitPlace(x: number, y: number, z: number): Promise<MovePayload | null> {
+  async submitPlace(x: number, y?: number, z?: number): Promise<MovePayload | null> {
     const elapsed = this.gameState.time_control !== 'none' ? Date.now() - this.lastTickAt : undefined;
+    // Sphere mode submits a single node index in x (y/z omitted). Cube/stack
+    // submit full coordinates.
+    const move: { type: string; x: number; y?: number; z?: number; time_ms?: number } =
+      { type: 'place', x, time_ms: elapsed };
+    if (y !== undefined) move.y = y;
+    if (z !== undefined) move.z = z;
     try {
-      const res = await Games.move(this.gameState.id, { type: 'place', x, y, z, time_ms: elapsed });
+      const res = await Games.move(this.gameState.id, move);
       // The server's response is authoritative; Pusher delivers the move to the
       // opponent. We update our own clock locally and return the payload so the
       // caller can apply our own move immediately (some Pusher setups don't
@@ -214,6 +220,10 @@ export class MultiplayerController {
     try {
       const state = await Games.get(this.gameState.id);
       const newMoves = state.moves.slice(this.pollMoveNumber);
+      // Sphere games have no client engine, so the synthetic payload must carry
+      // the authoritative flat board (the polled state already has it).
+      const sphereBoard = state.geometry !== null && Array.isArray(state.board)
+        ? (state.board as number[]) : undefined;
       for (const m of newMoves) {
         if (m.type === 'place' || m.type === 'pass') {
           const playerSlot = state.player1_id === m.player_id ? 1 : 2;
@@ -224,6 +234,7 @@ export class MultiplayerController {
             next_player: 3 - playerSlot,
             x: m.x, y: m.y, z: m.z,
             captured: [],
+            board: sphereBoard,
             p1_time_ms: state.p1_time_ms,
             p2_time_ms: state.p2_time_ms,
           };

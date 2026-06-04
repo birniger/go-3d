@@ -120,13 +120,23 @@ export interface GameSummary {
   player2_name?:   string | null;
 }
 
+/** Geodesic globe geometry for sphere games (server-generated, see Go3D_Geodesic). */
+export interface SphereGeometry {
+  vertices: [number, number, number][];
+  edges:    [number, number][];
+  count:    number;
+}
+
 export interface GameState extends GameSummary {
   time_settings:       Record<string, unknown> | null;
   p1_time_ms:          number | null;
   p2_time_ms:          number | null;
   consecutive_passes:  number;
   active_layer:        number;
-  board:               number[][][];
+  // Cube/stack: 3D lattice. Sphere: a flat node array (index = geodesic node).
+  board:               number[][][] | number[];
+  // Present only for sphere games.
+  geometry:            SphereGeometry | null;
   moves:               MoveRecord[];
 }
 
@@ -149,7 +159,10 @@ export interface MovePayload {
   x?:            number;
   y?:            number;
   z?:            number;
-  captured?:     [number, number, number][];
+  // Cube/stack: [x,y,z] triples. Sphere: flat node indices.
+  captured?:     [number, number, number][] | number[];
+  // Sphere only: the authoritative flat board after this move (client has no engine).
+  board?:        number[];
   active_layer?: number;   // stack mode: present on 'layer-advance'
   p1_time_ms?:   number | null;
   p2_time_ms?:   number | null;
