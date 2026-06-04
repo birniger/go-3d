@@ -29,9 +29,16 @@ class Go3D_API_Games {
 
         // Single game
         register_rest_route( $ns, '/games/(?P<id>\d+)', [
-            'methods'             => 'GET',
-            'callback'            => [ __CLASS__, 'get_game' ],
-            'permission_callback' => '__return_true',
+            [
+                'methods'             => 'GET',
+                'callback'            => [ __CLASS__, 'get_game' ],
+                'permission_callback' => '__return_true',
+            ],
+            [
+                'methods'             => 'DELETE',
+                'callback'            => [ __CLASS__, 'cancel_game' ],
+                'permission_callback' => '__return_true',
+            ],
         ] );
 
         // Join an open game
@@ -98,6 +105,17 @@ class Go3D_API_Games {
         $state   = Go3D_Game::get_state( $game_id );
         if ( ! $state ) return Go3D_API::error( 'Game not found.', 404 );
         return Go3D_API::ok( $state );
+    }
+
+    public static function cancel_game( WP_REST_Request $req ): WP_REST_Response {
+        $user_id = Go3D_JWT::current_user_id();
+        if ( ! $user_id ) return Go3D_API::error( 'Unauthorized.', 401 );
+
+        $game_id = (int)$req->get_param( 'id' );
+        $result  = Go3D_Game::cancel( $game_id, $user_id );
+        if ( ! $result['ok'] ) return Go3D_API::error( $result['error'], $result['code'] );
+
+        return Go3D_API::ok( [ 'message' => 'Game cancelled.', 'game_id' => $game_id ] );
     }
 
     public static function join_game( WP_REST_Request $req ): WP_REST_Response {

@@ -24,6 +24,7 @@ import { GameController, LocalController, LocalGameConfig } from './local-contro
 import { buildGeodesic } from './geodesic';
 import { showToast } from './lobby';
 import { music } from './music';
+import { confirmModal } from './modal';
 
 // ── Controller factory ──────────────────────────────────────────────────────
 
@@ -260,6 +261,8 @@ export class GameSession {
 
   private async doPass(): Promise<void> {
     if (this.finished || this.currentTurn !== this.mySlot) return;
+    if (!(await confirmModal('Pass your turn? Two passes in a row end the game and trigger scoring.', { title: 'Pass', confirm: 'Pass', cancel: 'Cancel', danger: false }))) return;
+    if (this.finished || this.currentTurn !== this.mySlot) return; // re-check after async prompt
     try {
       const payload = await this.controller.submitPass();
       if (payload) this.applyMove(payload);
@@ -268,7 +271,7 @@ export class GameSession {
 
   private async doResign(): Promise<void> {
     if (this.finished) return;
-    if (!confirm('Resign this game?')) return;
+    if (!(await confirmModal('Resign this game? This counts as a loss.', { title: 'Resign', confirm: 'Resign', cancel: 'Keep playing', danger: true }))) return;
     try { await this.controller.submitResign(); } catch { /* surfaced via onError */ }
   }
 
@@ -716,6 +719,8 @@ export class SphereGameSession {
 
   private async doPass(): Promise<void> {
     if (this.finished || this.currentTurn !== this.mySlot) return;
+    if (!(await confirmModal('Pass your turn? Two passes in a row end the game and trigger scoring.', { title: 'Pass', confirm: 'Pass', cancel: 'Cancel', danger: false }))) return;
+    if (this.finished || this.currentTurn !== this.mySlot) return; // re-check after async prompt
     try {
       const payload = await this.controller.submitPass();
       if (payload) this.applyMove(payload);
@@ -724,7 +729,7 @@ export class SphereGameSession {
 
   private async doResign(): Promise<void> {
     if (this.finished) return;
-    if (!confirm('Resign this game?')) return;
+    if (!(await confirmModal('Resign this game? This counts as a loss.', { title: 'Resign', confirm: 'Resign', cancel: 'Keep playing', danger: true }))) return;
     try { await this.controller.submitResign(); } catch { /* surfaced via onError */ }
   }
 

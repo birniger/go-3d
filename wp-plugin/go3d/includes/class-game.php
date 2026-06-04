@@ -132,6 +132,35 @@ class Go3D_Game {
         return [ 'ok' => true ];
     }
 
+    /**
+     * Cancel an open game you created (before anyone has joined). Only the
+     * creator may cancel, and only while the game is still 'open'.
+     *
+     * @return array{ok:true}|array{ok:false,error:string,code:int}
+     */
+    public static function cancel( int $game_id, int $user_id ): array {
+        global $wpdb;
+        $t    = $wpdb->prefix . 'go3d_games';
+        $game = self::get_row( $game_id );
+
+        if ( ! $game )
+            return [ 'ok' => false, 'error' => 'Game not found.', 'code' => 404 ];
+        if ( (int)$game['player1_id'] !== $user_id )
+            return [ 'ok' => false, 'error' => 'You can only cancel your own games.', 'code' => 403 ];
+        if ( $game['status'] !== 'open' )
+            return [ 'ok' => false, 'error' => 'Only open games can be cancelled.', 'code' => 409 ];
+
+        // Atomic guard: the WHERE status='open' loses a race against a joiner
+        // who flipped the game to 'active' a moment ago.
+        $deleted = $wpdb->delete( $t, [ 'id' => $game_id, 'status' => 'open' ] );
+        if ( ! $deleted )
+            return [ 'ok' => false, 'error' => 'Game can no longer be cancelled.', 'code' => 409 ];
+
+        $wpdb->delete( $wpdb->prefix . 'go3d_moves', [ 'game_id' => $game_id ] );
+
+        return [ 'ok' => true ];
+    }
+
     // ── Move submission ───────────────────────────────────────────────────────
 
     /**

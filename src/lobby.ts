@@ -7,6 +7,7 @@
 import { AuthState, apiErrorMessage } from './auth';
 import { Games, Users, GameSummary, User, ApiError } from './api';
 import { formatClock } from './multiplayer';
+import { confirmModal } from './modal';
 import {
   GameFormSettings,
   bindGameForm,
@@ -381,7 +382,7 @@ export class Lobby {
             <td>${g.komi}</td>
             <td>${escHtml(g.time_control)}</td>
             <td>${g.player1_id === myId
-              ? '<span class="go3d-chip">Your game</span>'
+              ? `<span class="go3d-chip">Your game</span> <button class="go3d-btn-ghost go3d-btn-sm go3d-cancel-btn" data-id="${g.id}">Cancel</button>`
               : `<button class="go3d-btn-primary go3d-btn-sm go3d-join-btn" data-id="${g.id}">Join</button>`
             }</td>`;
           tbody.appendChild(tr);
@@ -392,6 +393,19 @@ export class Lobby {
             try {
               await Games.join(id);
               this.onScreenChange('game', id);
+            } catch (err) {
+              showToast(apiErrorMessage(err), 'error');
+            }
+          });
+        });
+        tbody.querySelectorAll<HTMLButtonElement>('.go3d-cancel-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = Number(btn.dataset.id);
+            if (!(await confirmModal('Cancel this open game? It will be removed from the lobby.', { title: 'Cancel game', confirm: 'Cancel game', cancel: 'Keep it', danger: true }))) return;
+            try {
+              await Games.cancel(id);
+              showToast('Game cancelled.', 'success');
+              await this.loadOpenGames();
             } catch (err) {
               showToast(apiErrorMessage(err), 'error');
             }

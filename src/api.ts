@@ -77,6 +77,7 @@ async function request<T>(
 const get  = <T>(path: string)                          => request<T>('GET',   path);
 const post = <T>(path: string, b: Record<string, unknown>) => request<T>('POST',  path, b);
 const patch = <T>(path: string, b: Record<string, unknown>) => request<T>('PATCH', path, b);
+const del  = <T>(path: string)                          => request<T>('DELETE', path);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -233,6 +234,9 @@ export const Games = {
 
   join: (id: number) =>
     post<{ message: string; game_id: number }>(`/games/${id}/join`, {}),
+
+  cancel: (id: number) =>
+    del<{ message: string; game_id: number }>(`/games/${id}`),
 
   move: (id: number, move: { type: string; x?: number; y?: number; z?: number; time_ms?: number }) =>
     post<{ event: string; payload: MovePayload | GameOverPayload }>(`/games/${id}/move`, move as Record<string, unknown>),
