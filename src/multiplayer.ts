@@ -45,6 +45,8 @@ export interface MultiplayerCallbacks {
 export class MultiplayerController {
   readonly gameState: GameState;
   readonly mySlot: 1 | 2;
+  /** Structurally satisfies GameController; the server build is never local. */
+  readonly isLocal = false;
 
   /** Which player's turn it currently is (1 or 2). Updated on every move. */
   currentPlayer: 1 | 2;

@@ -47,6 +47,12 @@ class Go3D_JWT {
 
         [ $header, $payload, $sig ] = $parts;
 
+        // Reject anything that doesn't explicitly declare HS256. We only ever
+        // issue HS256, and pinning the algorithm closes off "alg" confusion
+        // (e.g. a forged header asking for "none") before we trust the token.
+        $hdr = json_decode( self::b64u_decode( $header ), true );
+        if ( ! is_array( $hdr ) || ( $hdr['alg'] ?? '' ) !== 'HS256' ) return null;
+
         $expected = self::b64u_encode( hash_hmac( 'sha256', "$header.$payload", self::secret(), true ) );
         if ( ! hash_equals( $expected, $sig ) ) return null;
 

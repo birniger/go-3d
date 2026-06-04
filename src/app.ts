@@ -12,7 +12,7 @@
 
 import { AuthState } from './auth';
 import { Lobby, showToast, Screen } from './lobby';
-import { Games, Users, GameState, MovePayload, GameOverPayload } from './api';
+import { Games, Users, GameState, MovePayload, GameOverPayload, SphereGeometry } from './api';
 import { Go3D } from './game';
 import { Renderer } from './renderer';
 import { SphereRenderer } from './sphere-renderer';
@@ -21,6 +21,82 @@ import {
   MultiplayerCallbacks,
   MultiplayerClockDisplay,
 } from './multiplayer';
+import { GameController, LocalController, LocalGameConfig } from './local-controller';
+import { buildGeodesic } from './geodesic';
+
+// ── Controller factory ──────────────────────────────────────────────────────
+
+/**
+ * Builds the controller that drives a session. The default is the server-backed
+ * MultiplayerController; local hot-seat games inject a LocalController instead.
+ * Both structurally satisfy GameController, so the sessions are agnostic.
+ */
+export type ControllerFactory = (state: GameState, callbacks: MultiplayerCallbacks) => GameController;
+const serverController: ControllerFactory = (s, c) => new MultiplayerController(s, c);
+
+/** Player colour label, used for hot-seat wording where there are no usernames. */
+function colourName(slot: 1 | 2): string {
+  return slot === 1 ? 'Black' : 'White';
+}
+
+/**
+ * Synthesise the GameState a hot-seat session runs on. There is no server, so
+ * Black is "player 1", White is "player 2", the game starts active, and (for
+ * sphere) the geodesic graph is generated locally exactly as the server would.
+ */
+function buildLocalState(config: LocalGameConfig): GameState {
+  const now = new Date().toISOString();
+  const ts  = config.time_settings ?? null;
+  const timed = config.time_control !== 'none';
+  const mainMs = timed ? (ts?.main_time_s ?? 0) * 1000 : null;
+  const periods = config.time_control === 'byoyomi' ? (ts?.byoyomi_periods ?? null) : null;
+
+  let geometry: SphereGeometry | null = null;
+  let board: number[][][] | number[];
+  if (config.mode === 'sphere') {
+    const g = buildGeodesic(config.board_size);
+    geometry = { vertices: g.vertices, edges: g.edges, count: g.count };
+    board = new Array<number>(g.count).fill(0);
+  } else {
+    const n = config.board_size;
+    board = Array.from({ length: n }, () =>
+      Array.from({ length: n }, () => new Array<number>(n).fill(0)));
+  }
+
+  return {
+    id:             -1,
+    player1_id:     1,
+    player2_id:     2,
+    player1_name:   config.p1_name || 'Black',
+    player2_name:   config.p2_name || 'White',
+    board_size:     config.board_size,
+    mode:           config.mode,
+    scoring_mode:   config.scoring_mode,
+    komi:           config.komi,
+    time_control:   config.time_control,
+    current_player: 1,
+    status:         'active',
+    winner_id:      null,
+    end_reason:     null,
+    p1_score:       null,
+    p2_score:       null,
+    elo_change_p1:  null,
+    elo_change_p2:  null,
+    created_at:     now,
+    last_move_at:   null,
+    finished_at:    null,
+    time_settings:  ts,
+    p1_time_ms:     mainMs,
+    p2_time_ms:     mainMs,
+    p1_periods:     periods,
+    p2_periods:     periods,
+    consecutive_passes: 0,
+    active_layer:   0,
+    board,
+    geometry,
+    moves:          [],
+  };
+}
 
 // ── Shared DOM helpers (used by both session types) ─────────────────────────
 
@@ -78,7 +154,7 @@ function maybeShowOnboarding(): void {
 class GameSession {
   private game: Go3D;
   private renderer: Renderer;
-  private controller: MultiplayerController;
+  private controller: GameController;
   private clockDisplay: MultiplayerClockDisplay;
 
   /** Highest move_number already applied to the local board (dedupe guard). */
@@ -100,7 +176,11 @@ class GameSession {
   private readonly keyHandler   = (e: KeyboardEvent) => this.onKeydown(e);
   private readonly mouseHandler = () => { if (this.cursorMode) this.deactivateCursor(); };
 
-  constructor(private state: GameState, private onExit: () => void) {
+  constructor(
+    private state: GameState,
+    private onExit: () => void,
+    makeController: ControllerFactory = serverController,
+  ) {
     this.game = new Go3D(state.board_size);
 
     // Replay the move history so the local board, capture counts and
@@ -137,7 +217,7 @@ class GameSession {
         showToast(`Layer complete — building up to layer ${l + 1}.`, 'info');
       },
     };
-    this.controller = new MultiplayerController(state, callbacks);
+    this.controller = makeController(state, callbacks);
     this.controller.connect();
 
     this.bindButtons();
@@ -155,6 +235,7 @@ class GameSession {
   // ── Local actions ─────────────────────────────────────────────────────────
 
   private get mySlot(): 1 | 2 { return this.controller.mySlot; }
+  private get isLocal(): boolean { return this.controller.isLocal; }
 
   private async doLocalPlace(x: number, y: number, z: number): Promise<void> {
     if (this.finished) return;
@@ -209,7 +290,10 @@ class GameSession {
     } else if (p.type === 'pass') {
       this.game.pass();
       this.renderer.playPassSound();
-      showToast(p.player_slot === this.mySlot ? 'You passed.' : 'Opponent passed.', 'info');
+      showToast(
+        this.isLocal ? `${colourName(p.player_slot as 1 | 2)} passed.`
+                     : (p.player_slot === this.mySlot ? 'You passed.' : 'Opponent passed.'),
+        'info');
     } else if (p.type === 'layer-advance') {
       // Stack mode: the second consecutive pass both passed and advanced the
       // build to the next layer. Apply the pass to keep engine turn in sync,
@@ -238,17 +322,20 @@ class GameSession {
   private handleGameOver(p: GameOverPayload): void {
     this.finished = true;
     setActiveGlow(this.currentTurn, true);
+    // Local games carry a slot number (1|2) in winner_id; server games a user id.
     const myId = AuthState.user?.id ?? -1;
+    const iWon = this.isLocal ? false : p.winner_id === myId;
     let msg: string;
-    if (p.winner_id === null)      msg = 'Game over — draw.';
-    else if (p.winner_id === myId) msg = 'You won! 🎉';
-    else                           msg = 'You lost.';
+    if (p.winner_id === null)   msg = 'Game over — draw.';
+    else if (this.isLocal)      msg = `${colourName(p.winner_id as 1 | 2)} wins! 🎉`;
+    else if (iWon)              msg = 'You won! 🎉';
+    else                        msg = 'You lost.';
 
     const reason = p.end_reason ? ` (${p.end_reason.replace(/_/g, ' ')})` : '';
     if (p.p1_score !== null && p.p2_score !== null) {
       msg += `  Score — Black ${p.p1_score} : White ${p.p2_score}.`;
     }
-    showToast(msg + reason, p.winner_id === myId ? 'success' : 'info');
+    showToast(msg + reason, (this.isLocal || iWon) ? 'success' : 'info');
 
     const ind = document.getElementById('go3d-turn-indicator');
     if (ind) ind.textContent = 'Game over';
@@ -444,6 +531,21 @@ class GameSession {
 
   private refreshTurnUI(): void {
     if (this.finished) return;
+
+    // Hot-seat: both players share the screen, so there's no "waiting" or
+    // "opponent" — just announce whose colour is to move and keep controls live.
+    if (this.isLocal) {
+      const ind = document.getElementById('go3d-turn-indicator');
+      if (ind) ind.textContent = `${colourName(this.currentTurn)} to move`;
+      const overlay = document.getElementById('go3d-waiting-overlay');
+      if (overlay) overlay.style.display = 'none';
+      const pass   = document.getElementById('go3d-pass-btn')   as HTMLButtonElement | null;
+      const resign = document.getElementById('go3d-resign-btn') as HTMLButtonElement | null;
+      if (pass)   pass.disabled   = false;
+      if (resign) resign.disabled = false;
+      return;
+    }
+
     const myTurn  = this.currentTurn === this.mySlot;
     const waiting = this.state.status !== 'active';
 
@@ -473,6 +575,11 @@ class GameSession {
       if (n) n.textContent = name;
       if (e) e.textContent = elo !== undefined ? String(elo) : '';
     };
+    if (this.isLocal) {
+      set(1, this.state.player1_name || 'Black');
+      set(2, this.state.player2_name || 'White');
+      return;
+    }
     set(1, `Player ${this.state.player1_id}`);
     set(2, this.state.player2_id ? `Player ${this.state.player2_id}` : '(waiting)');
 
@@ -507,7 +614,7 @@ class GameSession {
  */
 class SphereGameSession {
   private renderer: SphereRenderer;
-  private controller: MultiplayerController;
+  private controller: GameController;
   private clockDisplay: MultiplayerClockDisplay;
 
   private board: number[];
@@ -523,7 +630,11 @@ class SphereGameSession {
   /** Node adjacency derived from edges — used only for the end-game territory overlay. */
   private adjacency: number[][];
 
-  constructor(private state: GameState, private onExit: () => void) {
+  constructor(
+    private state: GameState,
+    private onExit: () => void,
+    makeController: ControllerFactory = serverController,
+  ) {
     if (!state.geometry) throw new Error('Sphere game has no geometry.');
     this.board       = (state.board as number[]).slice();
     this.currentTurn = state.current_player as 1 | 2;
@@ -543,7 +654,7 @@ class SphereGameSession {
       onError:        m  => showToast(m, 'error'),
       onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
     };
-    this.controller = new MultiplayerController(state, callbacks);
+    this.controller = makeController(state, callbacks);
     this.controller.connect();
 
     this.bindButtons();
@@ -555,6 +666,7 @@ class SphereGameSession {
   }
 
   private get mySlot(): 1 | 2 { return this.controller.mySlot; }
+  private get isLocal(): boolean { return this.controller.isLocal; }
 
   /** Sphere has no slice/camera/replay — only the territory-score toggle applies. */
   private setupViewControls(): void {
@@ -621,7 +733,10 @@ class SphereGameSession {
       this.renderer.markLastMove(p.x);
     } else if (p.type === 'pass') {
       this.renderer.playPassSound();
-      showToast(p.player_slot === this.mySlot ? 'You passed.' : 'Opponent passed.', 'info');
+      showToast(
+        this.isLocal ? `${colourName(p.player_slot as 1 | 2)} passed.`
+                     : (p.player_slot === this.mySlot ? 'You passed.' : 'Opponent passed.'),
+        'info');
     }
 
     this.currentTurn = p.next_player as 1 | 2;
@@ -639,17 +754,20 @@ class SphereGameSession {
     this.scoreShowing = true;
     setActiveGlow(this.currentTurn, true);
     this.renderer.setInteractive(false);
+    // Local games carry a slot number (1|2) in winner_id; server games a user id.
     const myId = AuthState.user?.id ?? -1;
+    const iWon = this.isLocal ? false : p.winner_id === myId;
     let msg: string;
-    if (p.winner_id === null)      msg = 'Game over — draw.';
-    else if (p.winner_id === myId) msg = 'You won! 🎉';
-    else                           msg = 'You lost.';
+    if (p.winner_id === null)   msg = 'Game over — draw.';
+    else if (this.isLocal)      msg = `${colourName(p.winner_id as 1 | 2)} wins! 🎉`;
+    else if (iWon)              msg = 'You won! 🎉';
+    else                        msg = 'You lost.';
 
     const reason = p.end_reason ? ` (${p.end_reason.replace(/_/g, ' ')})` : '';
     if (p.p1_score !== null && p.p2_score !== null) {
       msg += `  Score — Black ${p.p1_score} : White ${p.p2_score}.`;
     }
-    showToast(msg + reason, p.winner_id === myId ? 'success' : 'info');
+    showToast(msg + reason, (this.isLocal || iWon) ? 'success' : 'info');
 
     const ind = document.getElementById('go3d-turn-indicator');
     if (ind) ind.textContent = 'Game over';
@@ -685,6 +803,19 @@ class SphereGameSession {
 
   private refreshTurnUI(): void {
     if (this.finished) return;
+
+    if (this.isLocal) {
+      const ind = document.getElementById('go3d-turn-indicator');
+      if (ind) ind.textContent = `${colourName(this.currentTurn)} to move`;
+      const overlay = document.getElementById('go3d-waiting-overlay');
+      if (overlay) overlay.style.display = 'none';
+      const pass   = document.getElementById('go3d-pass-btn')   as HTMLButtonElement | null;
+      const resign = document.getElementById('go3d-resign-btn') as HTMLButtonElement | null;
+      if (pass)   pass.disabled   = false;
+      if (resign) resign.disabled = false;
+      return;
+    }
+
     const myTurn  = this.currentTurn === this.mySlot;
     const waiting = this.state.status !== 'active';
     const ind = document.getElementById('go3d-turn-indicator');
@@ -710,6 +841,11 @@ class SphereGameSession {
       if (n) n.textContent = name;
       if (e) e.textContent = elo !== undefined ? String(elo) : '';
     };
+    if (this.isLocal) {
+      set(1, this.state.player1_name || 'Black');
+      set(2, this.state.player2_name || 'White');
+      return;
+    }
     set(1, `Player ${this.state.player1_id}`);
     set(2, this.state.player2_id ? `Player ${this.state.player2_id}` : '(waiting)');
     void Users.getProfile(this.state.player1_id)
@@ -746,12 +882,39 @@ class App {
   }
 
   private onScreenChange(screen: Screen, data?: unknown): void {
-    // Any screen change other than entering a game tears down a live session.
-    if (screen !== 'game' && this.session) {
+    // Entering a game (server or local) keeps no prior session; any other screen
+    // change tears one down.
+    if (screen !== 'game' && screen !== 'local' && this.session) {
       this.session.dispose();
       this.session = null;
     }
-    if (screen === 'game') void this.enterGame(Number(data));
+    if (screen === 'game')  void this.enterGame(Number(data));
+    if (screen === 'local') this.enterLocalGame(data as LocalGameConfig);
+  }
+
+  /**
+   * Start a two-players-one-computer (hot-seat) game. No server round-trip: we
+   * synthesise a GameState (Black = player 1, White = player 2) and drive the
+   * existing session shell with a LocalController instead of the multiplayer one.
+   */
+  private enterLocalGame(config: LocalGameConfig): void {
+    document.querySelectorAll<HTMLElement>('.go3d-screen').forEach(el => {
+      el.style.display = el.id === 'go3d-game-screen' ? '' : 'none';
+    });
+
+    if (this.session) { this.session.dispose(); this.session = null; }
+
+    try {
+      const state = buildLocalState(config);
+      const onExit = () => { this.session = null; void this.lobby.showLobby(); };
+      const makeLocal: ControllerFactory = (s, c) => new LocalController(s, c);
+      this.session = state.mode === 'sphere'
+        ? new SphereGameSession(state, onExit, makeLocal)
+        : new GameSession(state, onExit, makeLocal);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not start local game.', 'error');
+      void this.lobby.showLobby();
+    }
   }
 
   private async enterGame(gameId: number): Promise<void> {

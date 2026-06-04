@@ -105,6 +105,12 @@
 .go3d-btn-danger { color: var(--go3d-danger); border-color: rgba(255, 59, 48, 0.4); }
 .go3d-btn-danger:hover { border-color: var(--go3d-danger); color: #fff; background: rgba(255,59,48,0.12); }
 
+/* New-game form: primary (create open) + ghost (play locally) side by side. */
+.go3d-form-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.go3d-form-actions .go3d-btn-primary,
+.go3d-form-actions .go3d-btn-ghost { flex: 1 1 auto; }
+.go3d-form-hint { margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--go3d-muted, #8a93a7); }
+
 /* ── Auth tabs ───────────────────────────────────────────────────────────── */
 .go3d-auth-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
 .go3d-tab-btn {

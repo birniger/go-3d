@@ -204,6 +204,17 @@ class Go3D_Game {
                 ];
             } else {
                 // Absolute / Fischer: simple subtraction.
+                // First, detect a flag: if the player consumed more time than
+                // they had left, the move itself ran out the clock → loss on
+                // time. Mirror the byōyomi branch and finalise immediately
+                // rather than silently clamping to 0 and letting play continue.
+                $cur_time = $player_slot === 1 ? $p1_time_ms : $p2_time_ms;
+                if ( $cur_time !== null && $elapsed_ms > $cur_time ) {
+                    return self::end_game( $game, $user_id, $player_slot, 'timeout', $time_ms,
+                        $player_slot === 1 ? 0 : $p1_time_ms,
+                        $player_slot === 2 ? 0 : $p2_time_ms, $byo );
+                }
+
                 if ( $player_slot === 1 && $p1_time_ms !== null ) $p1_time_ms = max( 0, $p1_time_ms - $elapsed_ms );
                 if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms = max( 0, $p2_time_ms - $elapsed_ms );
 
@@ -572,8 +583,41 @@ class Go3D_Game {
         $p1_id = (int)$game['player1_id'];
         $p2_id = $game['player2_id'] ? (int)$game['player2_id'] : null;
 
-        // ELO + win/loss/draw stats. Every finished two-player game counts,
-        // including draws (which update games_played and the draw column).
+        // Atomically claim the finish. The WHERE status='active' guard means
+        // only the FIRST of any concurrent finalisers (e.g. a real move and a
+        // cron timeout sweep racing) flips the row — every later one sees
+        // rows_affected === 0 and bails out below. This is what stops ELO from
+        // being applied twice and duplicate result notifications being queued.
+        $claimed = $wpdb->update( $gt, array_merge( [
+            'status'        => 'finished',
+            'winner_id'     => $winner_id,
+            'end_reason'    => $end_reason,
+            'p1_score'      => $p1_score,
+            'p2_score'      => $p2_score,
+            'p1_time_ms'    => $p1_time_ms,
+            'p2_time_ms'    => $p2_time_ms,
+            'finished_at'   => $now,
+            'last_move_at'  => $now,
+        ], $byo ), [ 'id' => $game['id'], 'status' => 'active' ] );
+
+        if ( $claimed !== 1 ) {
+            // Someone else already finished this game. Don't touch ELO or
+            // notifications — just report the already-recorded outcome.
+            $row = self::get_row( (int)$game['id'] );
+            return [ 'ok' => true, 'event' => 'game-over', 'payload' => [
+                'status'        => 'finished',
+                'end_reason'    => $row['end_reason']    ?? $end_reason,
+                'winner_id'     => isset( $row['winner_id'] ) ? (int)$row['winner_id'] : $winner_id,
+                'p1_score'      => $row['p1_score']      ?? $p1_score,
+                'p2_score'      => $row['p2_score']      ?? $p2_score,
+                'elo_change_p1' => (int)( $row['elo_change_p1'] ?? 0 ),
+                'elo_change_p2' => (int)( $row['elo_change_p2'] ?? 0 ),
+            ] ];
+        }
+
+        // We won the claim — now (and only now) apply ELO + win/loss/draw stats.
+        // Every finished two-player game counts, including draws (which update
+        // games_played and the draw column).
         $elo_change_p1 = 0;
         $elo_change_p2 = 0;
         if ( $p2_id ) {
@@ -581,21 +625,12 @@ class Go3D_Game {
             elseif ( $winner_id === $p2_id )  $outcome = 'p2_wins';
             else                              $outcome = 'draw';
             [ $elo_change_p1, $elo_change_p2 ] = Go3D_Elo::update( $p1_id, $p2_id, $outcome );
-        }
 
-        $wpdb->update( $gt, array_merge( [
-            'status'        => 'finished',
-            'winner_id'     => $winner_id,
-            'end_reason'    => $end_reason,
-            'p1_score'      => $p1_score,
-            'p2_score'      => $p2_score,
-            'elo_change_p1' => $elo_change_p1,
-            'elo_change_p2' => $elo_change_p2,
-            'p1_time_ms'    => $p1_time_ms,
-            'p2_time_ms'    => $p2_time_ms,
-            'finished_at'   => $now,
-            'last_move_at'  => $now,
-        ], $byo ), [ 'id' => $game['id'] ] );
+            $wpdb->update( $gt, [
+                'elo_change_p1' => $elo_change_p1,
+                'elo_change_p2' => $elo_change_p2,
+            ], [ 'id' => $game['id'] ] );
+        }
 
         $payload = [
             'status'        => 'finished',

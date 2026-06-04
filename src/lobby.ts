@@ -10,7 +10,7 @@ import { formatClock } from './multiplayer';
 
 // ── Screen management ─────────────────────────────────────────────────────────
 
-export type Screen = 'auth' | 'lobby' | 'game' | 'profile';
+export type Screen = 'auth' | 'lobby' | 'game' | 'profile' | 'local';
 
 type ScreenChangeCallback = (screen: Screen, data?: unknown) => void;
 
@@ -198,12 +198,13 @@ export class Lobby {
     cubeCustom.addEventListener('change', clampInput(cubeCustom, 2, 19));
     sphereFreq.addEventListener('change', clampInput(sphereFreq, 2, 8));
 
-    document.getElementById('go3d-new-game-form')!.addEventListener('submit', async e => {
-      e.preventDefault();
-      const form      = e.currentTarget as HTMLFormElement;
-      const fd        = new FormData(form);
-      const tc        = fd.get('time_control') as string;
-      const mode      = fd.get('mode') as string;
+    // Read the new-game form into a normalised settings object. Shared by both
+    // "Create open game" (server) and "Play locally" (hot-seat) so the two paths
+    // can never drift apart.
+    const readSettings = (form: HTMLFormElement) => {
+      const fd   = new FormData(form);
+      const tc   = fd.get('time_control') as string;
+      const mode = fd.get('mode') as string;
       // Sphere games store the geodesic frequency in board_size; cube/stack use
       // the lattice edge length. Both size selectors live outside the form (no
       // name attr) so we read them directly, resolving the "custom" preset.
@@ -217,24 +218,39 @@ export class Lobby {
           ? Math.max(2, Math.min(19, Number(cubeCustom.value)))
           : Number(cubeSel.value);
       }
-      const settings: Record<string, unknown> = {
-        board_size:   boardSize,
-        mode,
-        scoring_mode: fd.get('scoring_mode'),
-        komi:         Number(fd.get('komi')),
-        time_control: tc,
-      };
+      let timeSettings: Record<string, number> | null = null;
       if (tc !== 'none') {
-        const ts: Record<string, number> = { main_time_s: Number(fd.get('main_time_s')) };
+        timeSettings = { main_time_s: Number(fd.get('main_time_s')) };
         if (tc === 'byoyomi') {
-          ts.byoyomi_periods = Number(fd.get('byoyomi_periods'));
-          ts.byoyomi_time_s  = Number(fd.get('byoyomi_time_s'));
+          timeSettings.byoyomi_periods = Number(fd.get('byoyomi_periods'));
+          timeSettings.byoyomi_time_s  = Number(fd.get('byoyomi_time_s'));
         }
         if (tc === 'fischer') {
-          ts.fischer_increment_s = Number(fd.get('fischer_increment_s'));
+          timeSettings.fischer_increment_s = Number(fd.get('fischer_increment_s'));
         }
-        settings.time_settings = ts;
       }
+      return {
+        board_size:   boardSize,
+        mode:         mode as 'cube' | 'stack' | 'sphere',
+        scoring_mode: (fd.get('scoring_mode') as string) === 'japanese' ? 'japanese' : 'chinese',
+        komi:         Number(fd.get('komi')),
+        time_control: tc,
+        time_settings: timeSettings,
+      } as const;
+    };
+
+    document.getElementById('go3d-new-game-form')!.addEventListener('submit', async e => {
+      e.preventDefault();
+      const form     = e.currentTarget as HTMLFormElement;
+      const s        = readSettings(form);
+      const settings: Record<string, unknown> = {
+        board_size:   s.board_size,
+        mode:         s.mode,
+        scoring_mode: s.scoring_mode,
+        komi:         s.komi,
+        time_control: s.time_control,
+      };
+      if (s.time_settings) settings.time_settings = s.time_settings;
       try {
         const res = await Games.create(settings as Parameters<typeof Games.create>[0]);
         showToast('Game created! Waiting for an opponent…', 'info');
@@ -244,6 +260,22 @@ export class Lobby {
       } catch (err) {
         showToast(apiErrorMessage(err), 'error');
       }
+    });
+
+    // "Play locally": same settings, no server — start a hot-seat game where
+    // both players share this screen (like the standalone GitHub Pages build,
+    // but with every mode + time control).
+    document.getElementById('go3d-play-local-btn')?.addEventListener('click', () => {
+      const form = document.getElementById('go3d-new-game-form') as HTMLFormElement;
+      const s    = readSettings(form);
+      this.onScreenChange('local', {
+        mode:          s.mode,
+        board_size:    s.board_size,
+        scoring_mode:  s.scoring_mode,
+        komi:          s.komi,
+        time_control:  s.time_control,
+        time_settings: s.time_settings,
+      });
     });
   }
 

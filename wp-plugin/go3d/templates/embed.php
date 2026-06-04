@@ -117,7 +117,11 @@
               </span>
             </div>
           </div>
-          <button type="submit" class="go3d-btn-primary">Create open game</button>
+          <div class="go3d-form-actions">
+            <button type="submit" class="go3d-btn-primary">Create open game</button>
+            <button type="button" id="go3d-play-local-btn" class="go3d-btn-ghost">Play locally (2 players, 1 screen)</button>
+          </div>
+          <p class="go3d-form-hint">Local games run entirely in your browser — no opponent or account needed. Both players take turns at this computer.</p>
         </form>
       </section>
 
