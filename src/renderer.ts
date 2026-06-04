@@ -286,7 +286,11 @@ export class Renderer {
     this.controls.dampingFactor = 0.07;
     this.controls.minDistance = this.game.size * 0.5;
     this.controls.maxDistance = this.game.size * 8;
-    (this.controls as unknown as Record<string, unknown>).zoomToCursor = true;
+    // NB: do NOT enable zoomToCursor — it drags controls.target toward the
+    // pointer on every dolly, so after a zoom the orbit pivot is no longer the
+    // cube centre and rotation swings off-axis. Keep the target pinned at the
+    // origin so the board always rotates about its own centre.
+    this.controls.target.set(0, 0, 0);
 
     this.coordTip = document.getElementById('coord-tip') ?? (() => {
       const el = document.createElement('div'); el.id = 'coord-tip';
