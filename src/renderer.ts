@@ -146,6 +146,11 @@ export class Renderer {
   private slicePanel!: THREE.Mesh;
   private sliceBorder!: THREE.LineSegments;
 
+  // Stack mode: when set, placement is restricted to this vertical (y) layer
+  // and a highlight plane marks the current build surface. null = disabled.
+  private stackLayer: number | null = null;
+  private stackPlane!: THREE.Mesh;
+
   // Cursor (keyboard navigation)
   private cursorActive  = false;
   private cursorPos     = { x: 0, y: 0, z: 0 };
@@ -747,6 +752,16 @@ export class Renderer {
     this.sliceBorder.visible = false;
     this.scene.add(this.sliceBorder);
 
+    // Stack mode build-surface highlight (a green glowing plane at the active
+    // layer). Lies flat on the y axis; positioned each frame in stack mode.
+    this.stackPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(span + 0.6, span + 0.6),
+      new THREE.MeshBasicMaterial({ color: 0x19f5a0, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false })
+    );
+    this.stackPlane.rotation.set(Math.PI / 2, 0, 0);
+    this.stackPlane.visible = false;
+    this.scene.add(this.stackPlane);
+
     // Layer glyph DOM overlay
     this.layerGlyph = document.createElement('div');
     this.layerGlyph.id = 'layer-glyph';
@@ -814,6 +829,15 @@ export class Renderer {
     this._updateStoneColors();
   }
 
+  /**
+   * Stack mode: restrict placement to a single vertical (y) layer and highlight
+   * it. Pass null to disable (cube/sphere modes).
+   */
+  setStackLayer(layer: number | null) {
+    this.stackLayer = layer;
+    if (this.stackPlane) this.stackPlane.visible = layer !== null;
+  }
+
   // ── Camera control ────────────────────────────────────────────────────────
   private startIntroOrbit() {
     const d = this.game.size * 3;
@@ -855,6 +879,8 @@ export class Renderer {
       if (this.sliceAxis === 'x' && x !== this.sliceIndex) continue;
       for (let y = 0; y < s; y++) {
         if (this.sliceAxis === 'y' && y !== this.sliceIndex) continue;
+        // Stack mode: only the active build layer is clickable.
+        if (this.stackLayer !== null && y !== this.stackLayer) continue;
         for (let z = 0; z < s; z++) {
           if (this.sliceAxis === 'z' && z !== this.sliceIndex) continue;
           const px = this.coord(x), py = this.coord(y), pz = this.coord(z);
@@ -1114,6 +1140,16 @@ export class Renderer {
     } else {
       this.slicePanel.visible  = false;
       this.sliceBorder.visible = false;
+    }
+
+    // ── Stack mode build-surface plane ───────────────────────────────────────
+    if (this.stackLayer !== null) {
+      this.stackPlane.position.set(0, this.coord(this.stackLayer), 0);
+      this.stackPlane.visible = true;
+      (this.stackPlane.material as THREE.MeshBasicMaterial).opacity =
+        0.08 + 0.06 * Math.sin(this.hoverPhase * 0.9);
+    } else {
+      this.stackPlane.visible = false;
     }
 
     this._updateAxisLabels();

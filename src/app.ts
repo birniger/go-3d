@@ -39,6 +39,9 @@ class GameSession {
   private currentTurn: 1 | 2;
   private finished = false;
 
+  /** Stack mode: the active (vertical y) build layer, or null in other modes. */
+  private activeLayer: number | null = null;
+
   constructor(private state: GameState, private onExit: () => void) {
     this.game = new Go3D(state.board_size);
 
@@ -51,10 +54,12 @@ class GameSession {
     }
     this.appliedMoves = state.moves.length;
     this.currentTurn  = state.current_player as 1 | 2;
+    if (state.mode === 'stack') this.activeLayer = state.active_layer ?? 0;
 
     // Mount the renderer. doLocalPlace is the click handler the renderer calls
     // with board coordinates.
     this.renderer = new Renderer(this.game, (x, y, z) => void this.doLocalPlace(x, y, z));
+    if (this.activeLayer !== null) this.renderer.setStackLayer(this.activeLayer);
     this.renderer.updateStones();
 
     this.clockDisplay = new MultiplayerClockDisplay();
@@ -66,6 +71,11 @@ class GameSession {
       onPlayerJoined: () => { showToast('Your opponent has joined!', 'success'); this.refreshTurnUI(); },
       onError:        m  => showToast(m, 'error'),
       onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
+      onLayerChange:  l  => {
+        this.activeLayer = l;
+        this.renderer.setStackLayer(l);
+        showToast(`Layer complete — building up to layer ${l + 1}.`, 'info');
+      },
     };
     this.controller = new MultiplayerController(state, callbacks);
     this.controller.connect();
@@ -133,6 +143,17 @@ class GameSession {
       this.game.pass();
       this.renderer.playPassSound();
       showToast(p.player_slot === this.mySlot ? 'You passed.' : 'Opponent passed.', 'info');
+    } else if (p.type === 'layer-advance') {
+      // Stack mode: the second consecutive pass both passed and advanced the
+      // build to the next layer. Apply the pass to keep engine turn in sync,
+      // then move the active layer up.
+      this.game.pass();
+      this.renderer.playPassSound();
+      if (p.active_layer !== undefined) {
+        this.activeLayer = p.active_layer;
+        this.renderer.setStackLayer(p.active_layer);
+      }
+      showToast(`Layer complete — building up to layer ${(p.active_layer ?? 0) + 1}.`, 'info');
     }
 
     this.currentTurn = p.next_player as 1 | 2;

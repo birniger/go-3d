@@ -196,6 +196,38 @@ class Go3D_Game {
         $now = current_time( 'mysql', true );
 
         if ( $consecutive >= 2 ) {
+            // Stack mode: two passes advance to the next layer rather than ending
+            // the game — unless we're already on the top layer, in which case the
+            // completed cube is scored. Lower layers are never replayed.
+            if ( ( $game['mode'] ?? 'cube' ) === 'stack' ) {
+                $size         = (int)$game['board_size'];
+                $active_layer = (int)( $game['active_layer'] ?? 0 );
+                if ( $active_layer < $size - 1 ) {
+                    $new_layer   = $active_layer + 1;
+                    $next_player = 3 - $player_slot;
+                    $wpdb->update( $gt, [
+                        'consecutive_passes' => 0,
+                        'active_layer'       => $new_layer,
+                        'current_player'     => $next_player,
+                        'p1_time_ms'         => $p1_time_ms,
+                        'p2_time_ms'         => $p2_time_ms,
+                        'last_move_at'       => $now,
+                    ], [ 'id' => $game['id'] ] );
+
+                    $payload = [
+                        'type'         => 'layer-advance',
+                        'move_number'  => $move_number,
+                        'player_slot'  => $player_slot,
+                        'next_player'  => $next_player,
+                        'active_layer' => $new_layer,
+                        'p1_time_ms'   => $p1_time_ms,
+                        'p2_time_ms'   => $p2_time_ms,
+                    ];
+                    Go3D_Pusher::trigger( "private-game-{$game['id']}", 'move', $payload );
+                    return [ 'ok' => true, 'event' => 'move', 'payload' => $payload ];
+                }
+                // Top layer reached → fall through and score the whole cube.
+            }
             // Two consecutive passes → score and end
             return self::end_by_scoring( $game, $move_number, $p1_time_ms, $p2_time_ms );
         }
@@ -231,6 +263,13 @@ class Go3D_Game {
         $x = isset( $move_data['x'] ) ? (int)$move_data['x'] : -1;
         $y = isset( $move_data['y'] ) ? (int)$move_data['y'] : -1;
         $z = isset( $move_data['z'] ) ? (int)$move_data['z'] : -1;
+
+        // Stack mode: stones may only be placed on the currently active layer
+        // (the vertical y axis). Captures still resolve in full 3D, so stones on
+        // already-completed lower layers can be captured from above.
+        if ( ( $game['mode'] ?? 'cube' ) === 'stack' && $y !== (int)( $game['active_layer'] ?? 0 ) ) {
+            return [ 'ok' => false, 'error' => 'In stack mode you can only play on the active layer.', 'code' => 422 ];
+        }
 
         // Reconstruct board from move history
         $moves = self::get_moves( (int)$game['id'] );

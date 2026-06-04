@@ -142,16 +142,17 @@ export interface MoveRecord {
 }
 
 export interface MovePayload {
-  type:        string;
-  move_number: number;
-  player_slot: number;
-  next_player: number;
-  x?:          number;
-  y?:          number;
-  z?:          number;
-  captured?:   [number, number, number][];
-  p1_time_ms?: number | null;
-  p2_time_ms?: number | null;
+  type:          string;   // 'place' | 'pass' | 'layer-advance'
+  move_number:   number;
+  player_slot:   number;
+  next_player:   number;
+  x?:            number;
+  y?:            number;
+  z?:            number;
+  captured?:     [number, number, number][];
+  active_layer?: number;   // stack mode: present on 'layer-advance'
+  p1_time_ms?:   number | null;
+  p2_time_ms?:   number | null;
 }
 
 export interface GameOverPayload {

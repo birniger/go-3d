@@ -36,6 +36,8 @@ export interface MultiplayerCallbacks {
   onPlayerJoined: (player2_id: number) => void;
   onError:     (msg: string) => void;
   onClockTick: (p1Ms: number | null, p2Ms: number | null) => void;
+  /** Stack mode: fired by the polling fallback when the active layer advances. */
+  onLayerChange?: (layer: number) => void;
 }
 
 // ── Controller ────────────────────────────────────────────────────────────────
@@ -55,6 +57,9 @@ export class MultiplayerController {
   private p1Ms: number | null;
   private p2Ms: number | null;
 
+  /** Stack mode: last known active layer (used to detect advances when polling). */
+  private activeLayer: number;
+
   constructor(gameState: GameState, private callbacks: MultiplayerCallbacks) {
     this.gameState    = gameState;
     const uid         = AuthState.user!.id;
@@ -62,6 +67,7 @@ export class MultiplayerController {
     this.currentPlayer = gameState.current_player as 1 | 2;
     this.p1Ms         = gameState.p1_time_ms;
     this.p2Ms         = gameState.p2_time_ms;
+    this.activeLayer  = gameState.active_layer ?? 0;
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────
@@ -225,6 +231,13 @@ export class MultiplayerController {
         }
       }
       this.pollMoveNumber = state.moves.length;
+
+      // Stack mode: the advancing pass is stored as a plain 'pass', so detect
+      // an active-layer change here and notify the UI to move the build surface.
+      if (state.active_layer !== undefined && state.active_layer !== this.activeLayer) {
+        this.activeLayer = state.active_layer;
+        this.callbacks.onLayerChange?.(state.active_layer);
+      }
 
       if (state.status === 'finished') {
         this.stopPolling();
