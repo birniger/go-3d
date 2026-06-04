@@ -170,6 +170,18 @@ export class Renderer {
   private boundingBox!: THREE.LineSegments;
   private particles!: THREE.Points;
 
+  // ── Void FX: neon comet-streaks drifting through the empty space around the
+  // board. Kept on the camera-facing hemisphere so they never sit behind the
+  // cube from the player's viewpoint. Geometry is preallocated; only the
+  // position/colour buffers mutate per frame.
+  private readonly STREAK_N = 34;
+  private streaks!: THREE.LineSegments;
+  private streakPos!: Float32Array;   // STREAK_N * 2 verts * 3
+  private streakCol!: Float32Array;
+  private streakState: { p: THREE.Vector3; v: THREE.Vector3; life: number; max: number; r: number; g: number; b: number }[] = [];
+  private _camDir = new THREE.Vector3();
+  private _streakTail = new THREE.Vector3();
+
   // DOM
   private coordTip!: HTMLElement;
 
@@ -201,6 +213,7 @@ export class Renderer {
     this.initLights();
     this.buildBoard();
     this.initParticles();
+    this.initVoidFX();
     this.initStones();
     this.initTerritory();
     this.initEffects();
@@ -424,6 +437,90 @@ export class Renderer {
     this.particles = new THREE.Points(geo,
       new THREE.PointsMaterial({ color: 0x003344, size: 0.05, transparent: true, opacity: 0.55 }));
     this.scene.add(this.particles);
+  }
+
+  // Neon comet-streaks zipping through the void around the board.
+  private initVoidFX() {
+    this.streakPos = new Float32Array(this.STREAK_N * 2 * 3);
+    this.streakCol = new Float32Array(this.STREAK_N * 2 * 3);
+    const geo = new THREE.BufferGeometry();
+    const posAttr = new THREE.BufferAttribute(this.streakPos, 3); posAttr.setUsage(THREE.DynamicDrawUsage);
+    const colAttr = new THREE.BufferAttribute(this.streakCol, 3); colAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', posAttr);
+    geo.setAttribute('color', colAttr);
+    this.streaks = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.95,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.streaks.frustumCulled = false;
+    this.scene.add(this.streaks);
+    for (let i = 0; i < this.STREAK_N; i++) {
+      this.streakState.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), life: 0, max: 1, r: 0, g: 0, b: 0 });
+      this.spawnStreak(i, Math.random() * 80);   // stagger initial lives
+    }
+  }
+
+  /** (Re)spawn streak i somewhere on the camera-facing hemisphere, in the
+   *  peripheral void (not straight over the board, never behind the cube). */
+  private spawnStreak(i: number, lifeOffset = 0) {
+    const s = this.streakState[i];
+    const size = this.game.size;
+    // Camera direction from the board centre (board is centred at the origin).
+    this._camDir.copy(this.camera.position).normalize();
+    if (this._camDir.lengthSq() < 1e-4) this._camDir.set(1, 0.6, 1).normalize();
+    // Random direction, pulled onto the front hemisphere but kept off-axis so
+    // streaks live in the surrounding void rather than over the board centre.
+    const d = new THREE.Vector3(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
+    if (d.lengthSq() < 1e-3) d.set(0, 1, 0);
+    d.normalize();
+    let dot = d.dot(this._camDir);
+    if (dot < 0) { d.addScaledVector(this._camDir, -2 * dot); d.normalize(); dot = d.dot(this._camDir); }
+    if (dot > 0.7) { d.addScaledVector(this._camDir, -(dot - 0.45)); d.normalize(); }   // push off the camera axis
+    const radius = size * (1.7 + Math.random() * 1.9);
+    s.p.copy(d).multiplyScalar(radius);
+    // Velocity: mostly tangential so the streak skates across the view.
+    const tang = new THREE.Vector3().crossVectors(d, this._camDir);
+    if (tang.lengthSq() < 1e-3) tang.set(1, 0, 0);
+    tang.normalize();
+    const speed = size * (0.05 + Math.random() * 0.08);
+    s.v.copy(tang).multiplyScalar(speed * (Math.random() < 0.5 ? 1 : -1));
+    s.v.addScaledVector(d, size * (Math.random() - 0.5) * 0.02);   // slight radial wander
+    s.life = -lifeOffset;
+    s.max = 70 + Math.random() * 90;
+    const roll = Math.random();
+    if (roll < 0.5)      { s.r = 0.0; s.g = 0.9; s.b = 1.0; }   // cyan
+    else if (roll < 0.85){ s.r = 1.0; s.g = 0.0; s.b = 0.47; }  // pink
+    else                 { s.r = 0.1; s.g = 1.0; s.b = 0.63; }  // mint
+  }
+
+  private updateVoidFX() {
+    this._camDir.copy(this.camera.position).normalize();
+    const size = this.game.size;
+    const backLimit = -0.12, maxR = size * 4.2;
+    for (let i = 0; i < this.STREAK_N; i++) {
+      const s = this.streakState[i];
+      s.life++;
+      if (s.life >= 0) s.p.addScaledVector(s.v, 1);
+      // Respawn when the streak dies, drifts behind the cube, or flies too far.
+      if (s.life > s.max || s.p.dot(this._camDir) < backLimit * s.p.length() || s.p.length() > maxR) {
+        this.spawnStreak(i);
+      }
+      // Comet trail: tail trails behind the head along velocity.
+      this._streakTail.copy(s.p).addScaledVector(s.v, -5.5);
+      // Brightness envelope: fade in, hold, fade out.
+      const t = s.life < 0 ? 0 : s.life / s.max;
+      const env = Math.max(0, Math.sin(Math.PI * Math.min(1, Math.max(0, t))));
+      const hi = 0.18 + 0.82 * env;
+      const o = i * 6;
+      // Head vertex — bright.
+      this.streakPos[o]   = s.p.x; this.streakPos[o+1] = s.p.y; this.streakPos[o+2] = s.p.z;
+      this.streakCol[o]   = s.r * hi; this.streakCol[o+1] = s.g * hi; this.streakCol[o+2] = s.b * hi;
+      // Tail vertex — dimmer, for a comet gradient.
+      this.streakPos[o+3] = this._streakTail.x; this.streakPos[o+4] = this._streakTail.y; this.streakPos[o+5] = this._streakTail.z;
+      this.streakCol[o+3] = s.r * hi * 0.05; this.streakCol[o+4] = s.g * hi * 0.05; this.streakCol[o+5] = s.b * hi * 0.05;
+    }
+    (this.streaks.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
+    (this.streaks.geometry.attributes['color'] as THREE.BufferAttribute).needsUpdate = true;
   }
 
   // ── Stones ────────────────────────────────────────────────────────────────
@@ -999,6 +1096,7 @@ export class Renderer {
 
     // Particle drift
     this.particles.rotation.y += 0.0002;
+    this.updateVoidFX();
 
     // Stone depth-cueing updates every frame (camera moves); dots/hoshi only on slice change
     this._updateStoneColors();
