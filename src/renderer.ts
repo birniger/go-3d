@@ -666,6 +666,13 @@ export class Renderer {
             } else {
               col.setScalar(0.03);   // nearly invisible off the plane
             }
+          } else if (this.stackLayer !== null) {
+            // Stack mode: spotlight the active build layer, dim the rest of the
+            // lattice. Already-built layers below stay partly lit for context;
+            // the not-yet-reachable layers above fade back further.
+            if (y === this.stackLayer)      col.copy(dotDefault);
+            else if (y < this.stackLayer)   col.copy(dotDefault).multiplyScalar(0.32);
+            else                            col.copy(dotDefault).multiplyScalar(0.12);
           } else {
             col.copy(dotDefault);
           }
@@ -686,6 +693,10 @@ export class Renderer {
                         (this.sliceAxis === 'y' && y === this.sliceIndex) ||
                         (this.sliceAxis === 'z' && z === this.sliceIndex);
         if (onSlice) col.setHex(0xffcc55); else col.setScalar(0.02);
+      } else if (this.stackLayer !== null) {
+        if (y === this.stackLayer)      col.copy(hoshiDefault);
+        else if (y < this.stackLayer)   col.copy(hoshiDefault).multiplyScalar(0.3);
+        else                            col.copy(hoshiDefault).multiplyScalar(0.1);
       } else {
         col.copy(hoshiDefault);
       }
@@ -853,6 +864,9 @@ export class Renderer {
   setStackLayer(layer: number | null) {
     this.stackLayer = layer;
     if (this.stackPlane) this.stackPlane.visible = layer !== null;
+    // The active layer drives lattice dimming — recolour dots/hoshi.
+    this._dotsDirty  = true;
+    this._hoshiDirty = true;
   }
 
   // ── Camera control ────────────────────────────────────────────────────────

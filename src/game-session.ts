@@ -132,9 +132,8 @@ function resetViewControls(): void {
   setActiveGlow(1, true);
 }
 
-/** Show the first-run help overlay once; remembered in localStorage. */
-function maybeShowOnboarding(): void {
-  try { if (localStorage.getItem('go3d_onboarded')) return; } catch { /* private mode */ }
+/** Open the help / keyboard-shortcuts overlay. */
+function openHelpOverlay(): void {
   const ov = document.getElementById('go3d-onboarding');
   if (!ov) return;
   ov.style.display = 'flex';
@@ -143,6 +142,12 @@ function maybeShowOnboarding(): void {
     ov.style.display = 'none';
     try { localStorage.setItem('go3d_onboarded', '1'); } catch { /* ignore */ }
   };
+}
+
+/** Show the help overlay once on first run; remembered in localStorage. */
+function maybeShowOnboarding(): void {
+  try { if (localStorage.getItem('go3d_onboarded')) return; } catch { /* private mode */ }
+  openHelpOverlay();
 }
 
 // ── Active game session ─────────────────────────────────────────────────────
@@ -364,6 +369,7 @@ export class GameSession {
     click('go3d-cam-side',  () => this.renderer.faceCam('side'));
     click('go3d-cam-iso',   () => this.renderer.faceCam('iso'));
     click('go3d-score-btn', () => this.toggleScore());
+    click('go3d-help-btn',  () => openHelpOverlay());
 
     show('go3d-view-controls', true);
     show('go3d-slice-group',  true);
@@ -676,6 +682,8 @@ export class SphereGameSession {
     show('go3d-replay-bar',   false);
     const btn = document.getElementById('go3d-score-btn');
     if (btn) (btn as HTMLButtonElement).onclick = () => this.toggleScore();
+    const help = document.getElementById('go3d-help-btn');
+    if (help) (help as HTMLButtonElement).onclick = () => openHelpOverlay();
   }
 
   private toggleScore(): void {
