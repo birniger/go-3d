@@ -490,7 +490,7 @@ export class Renderer {
   // outside it, so the field of play is never cluttered.
   private initVoidFX() {
     const ext = (this.game.size - 1) / 2;
-    this.keepR = ext * 1.85;          // > corner distance (ext·√3 ≈ 1.73·ext)
+    this.keepR = ext * 2.5;           // well beyond corner distance (ext·√3 ≈ 1.73·ext)
 
     // — Comet-streaks (great-circle arcs on outer shells) —
     this.streakPos = new Float32Array(this.STREAK_N * 2 * 3);
@@ -542,8 +542,9 @@ export class Renderer {
     const d = p.dot(this._camDir);                 // signed view-depth
     const perp = Math.sqrt(Math.max(0, p.lengthSq() - d * d));
     const ext = (this.game.size - 1) / 2;
-    // Cube silhouette reaches its corner radius ≈1.73·ext; clear it with margin.
-    const inner = ext * 1.7, outer = ext * 2.1;
+    // Cube silhouette reaches its corner radius ≈1.73·ext; keep a generous gap
+    // so nothing hugs the edges — fully clear below 2.25·ext, fully shown past 3·ext.
+    const inner = ext * 2.25, outer = ext * 3.0;
     if (perp >= outer) return 1;
     if (perp <= inner) return 0;
     const t = (perp - inner) / (outer - inner);
@@ -648,7 +649,7 @@ export class Renderer {
   /** A faint outer cage (scaled bounding box) with Tron packets racing its edges. */
   private initCageRunners() {
     const ext = (this.game.size - 1) / 2;
-    const c = ext * 1.55;             // cage half-extent — edges stay outside keepR
+    const c = ext * 2.1;              // cage half-extent — edges stay well outside the cube
     const C: [number,number,number][] = [
       [-c,-c,-c],[c,-c,-c],[-c,c,-c],[c,c,-c],
       [-c,-c, c],[c,-c, c],[-c,c, c],[c,c, c],
