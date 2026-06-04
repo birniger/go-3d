@@ -74,15 +74,17 @@ class Go3D_Pusher {
         if ( ! $key || ! $secret )
             return [ 'ok' => false, 'error' => 'Pusher not configured.', 'code' => 500 ];
 
-        // Only allow access to channels of games the user is a player in
-        if ( preg_match( '/^private-game-(\d+)$/', $channel, $matches ) ) {
-            $game_id = (int)$matches[1];
-            $game    = Go3D_Game::get_row( $game_id );
-            if ( ! $game )
-                return [ 'ok' => false, 'error' => 'Game not found.', 'code' => 404 ];
-            if ( (int)$game['player1_id'] !== $user_id && (int)($game['player2_id'] ?? 0) !== $user_id )
-                return [ 'ok' => false, 'error' => 'Not a player in this game.', 'code' => 403 ];
+        // Default-deny: the only private channels this app uses are per-game
+        // channels, and you must be one of the two players to subscribe.
+        if ( ! preg_match( '/^private-game-(\d+)$/', $channel, $matches ) ) {
+            return [ 'ok' => false, 'error' => 'Unknown private channel.', 'code' => 403 ];
         }
+        $game_id = (int)$matches[1];
+        $game    = Go3D_Game::get_row( $game_id );
+        if ( ! $game )
+            return [ 'ok' => false, 'error' => 'Game not found.', 'code' => 404 ];
+        if ( (int)$game['player1_id'] !== $user_id && (int)($game['player2_id'] ?? 0) !== $user_id )
+            return [ 'ok' => false, 'error' => 'Not a player in this game.', 'code' => 403 ];
 
         $string_to_sign = "$socket_id:$channel";
         $signature      = hash_hmac( 'sha256', $string_to_sign, $secret );

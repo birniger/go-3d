@@ -23,11 +23,22 @@ class Go3D_Game {
         $time_control = in_array( $settings['time_control'] ?? '', ['none','absolute','byoyomi','fischer'], true ) ? $settings['time_control'] : 'none';
         $time_settings = isset( $settings['time_settings'] ) ? wp_json_encode( $settings['time_settings'] ) : null;
 
-        // Derive initial clocks
+        // Derive initial clocks.
+        //  – absolute/fischer: the clock is just main time (fischer adds an
+        //    increment per move, applied in submit_move()).
+        //  – byoyomi: we don't track per-move period resets in the schema, so we
+        //    fold the periods into the starting budget (main + periods × period).
+        //    This gives each player the correct TOTAL thinking time; it just
+        //    behaves as one absolute pool rather than resetting each period.
         $p1_time_ms = null;
         $p2_time_ms = null;
         if ( $time_control !== 'none' && isset( $settings['time_settings']['main_time_s'] ) ) {
             $main = (int)$settings['time_settings']['main_time_s'] * 1000;
+            if ( $time_control === 'byoyomi' ) {
+                $periods = max( 0, (int)( $settings['time_settings']['byoyomi_periods'] ?? 0 ) );
+                $ptime   = max( 0, (int)( $settings['time_settings']['byoyomi_time_s']  ?? 0 ) );
+                $main   += $periods * $ptime * 1000;
+            }
             $p1_time_ms = $main;
             $p2_time_ms = $main;
         }
@@ -83,7 +94,7 @@ class Go3D_Game {
             'status'     => 'active',
         ], [ 'id' => $game_id ] );
 
-        Go3D_Pusher::trigger( "game-$game_id", 'player-joined', [
+        Go3D_Pusher::trigger( "private-game-$game_id", 'player-joined', [
             'player2_id' => $player2_id,
         ] );
 
@@ -127,6 +138,15 @@ class Go3D_Game {
             $time_ms    = $elapsed_ms;
             if ( $player_slot === 1 && $p1_time_ms !== null ) $p1_time_ms = max( 0, $p1_time_ms - $elapsed_ms );
             if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms = max( 0, $p2_time_ms - $elapsed_ms );
+
+            // Fischer: add the increment back to the player who just moved
+            // (only for real board moves, not resignation).
+            if ( $game['time_control'] === 'fischer' && $type !== 'resign' ) {
+                $ts  = json_decode( $game['time_settings'] ?? '{}', true ) ?: [];
+                $inc = max( 0, (int)( $ts['fischer_increment_s'] ?? 0 ) ) * 1000;
+                if ( $player_slot === 1 && $p1_time_ms !== null ) $p1_time_ms += $inc;
+                if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms += $inc;
+            }
         }
 
         if ( $type === 'resign' ) {
@@ -155,7 +175,10 @@ class Go3D_Game {
         $next_player = 3 - $player_slot;
         $move_number = self::next_move_number( (int)$game['id'] );
 
-        $wpdb->insert( $mt, [
+        // The UNIQUE(game_id, move_number) index makes this insert fail if a
+        // concurrent request already claimed this move number. Treat that as a
+        // turn conflict rather than silently advancing the game twice.
+        $inserted = $wpdb->insert( $mt, [
             'game_id'     => $game['id'],
             'move_number' => $move_number,
             'player_id'   => $user_id,
@@ -163,6 +186,9 @@ class Go3D_Game {
             'time_ms'     => $time_ms,
             'created_at'  => current_time( 'mysql', true ),
         ] );
+        if ( false === $inserted ) {
+            return [ 'ok' => false, 'error' => 'Move already registered. Please retry.', 'code' => 409 ];
+        }
 
         $now = current_time( 'mysql', true );
 
@@ -187,7 +213,7 @@ class Go3D_Game {
             'p1_time_ms'  => $p1_time_ms,
             'p2_time_ms'  => $p2_time_ms,
         ];
-        Go3D_Pusher::trigger( "game-{$game['id']}", 'move', $payload );
+        Go3D_Pusher::trigger( "private-game-{$game['id']}", 'move', $payload );
 
         return [ 'ok' => true, 'event' => 'move', 'payload' => $payload ];
     }
@@ -218,7 +244,10 @@ class Go3D_Game {
         $move_number = self::next_move_number( (int)$game['id'] );
         $history[]   = $result['hash'];
 
-        $wpdb->insert( $mt, [
+        // UNIQUE(game_id, move_number) guards against a concurrent double-submit:
+        // if the insert fails the move number was already taken, so bail out
+        // before mutating the game row (which would corrupt turn/board state).
+        $inserted = $wpdb->insert( $mt, [
             'game_id'     => $game['id'],
             'move_number' => $move_number,
             'player_id'   => $user_id,
@@ -229,6 +258,9 @@ class Go3D_Game {
             'time_ms'     => $time_ms,
             'created_at'  => current_time( 'mysql', true ),
         ] );
+        if ( false === $inserted ) {
+            return [ 'ok' => false, 'error' => 'Move already registered. Please retry.', 'code' => 409 ];
+        }
 
         $next_player = 3 - $player_slot;
 
@@ -254,7 +286,7 @@ class Go3D_Game {
             'p1_time_ms'  => $p1_time_ms,
             'p2_time_ms'  => $p2_time_ms,
         ];
-        Go3D_Pusher::trigger( "game-{$game['id']}", 'move', $payload );
+        Go3D_Pusher::trigger( "private-game-{$game['id']}", 'move', $payload );
 
         return [ 'ok' => true, 'event' => 'move', 'payload' => $payload ];
     }
@@ -386,7 +418,7 @@ class Go3D_Game {
             'elo_change_p1' => $elo_change_p1,
             'elo_change_p2' => $elo_change_p2,
         ];
-        Go3D_Pusher::trigger( "game-{$game['id']}", 'game-over', $payload );
+        Go3D_Pusher::trigger( "private-game-{$game['id']}", 'game-over', $payload );
 
         // Queue result notifications
         if ( $p2_id ) {
