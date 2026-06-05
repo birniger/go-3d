@@ -7,6 +7,12 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 class Go3D_JWT {
 
     private static function secret(): string {
+        // A wp-config.php constant takes precedence over the DB option, so the
+        // signing key can live outside the database (and survive a DB dump /
+        // backup leak). Define it as:  define( 'GO3D_JWT_SECRET', '…' );
+        if ( defined( 'GO3D_JWT_SECRET' ) && is_string( GO3D_JWT_SECRET ) && GO3D_JWT_SECRET !== '' ) {
+            return GO3D_JWT_SECRET;
+        }
         $s = get_option( 'go3d_jwt_secret', '' );
         if ( ! $s ) {
             $s = wp_generate_password( 64, true, true );

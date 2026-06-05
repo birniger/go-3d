@@ -212,9 +212,11 @@ class Go3D_Auth {
         $user = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM $t WHERE email = %s AND email_verified = 1", sanitize_email( $email ) ), ARRAY_A );
         if ( ! $user ) return; // Silently succeed — don't reveal whether email exists
 
+        // Email the user the plaintext token, but only store its SHA-256 hash.
+        // A leaked DB backup then can't be used to hijack a pending reset.
         $token   = bin2hex( random_bytes( 32 ) );
         $expires = gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS );
-        $wpdb->update( $t, [ 'reset_token' => $token, 'reset_expires' => $expires ], [ 'id' => $user['id'] ] );
+        $wpdb->update( $t, [ 'reset_token' => hash( 'sha256', $token ), 'reset_expires' => $expires ], [ 'id' => $user['id'] ] );
 
         self::send_password_reset_email( $user['email'], $user['username'], $token );
     }
@@ -223,7 +225,7 @@ class Go3D_Auth {
         global $wpdb;
         $t    = $wpdb->prefix . 'go3d_users';
         $user = $wpdb->get_row(
-            $wpdb->prepare( "SELECT id FROM $t WHERE reset_token = %s AND reset_expires > %s", $token, gmdate( 'Y-m-d H:i:s' ) ),
+            $wpdb->prepare( "SELECT id FROM $t WHERE reset_token = %s AND reset_expires > %s", hash( 'sha256', $token ), gmdate( 'Y-m-d H:i:s' ) ),
             ARRAY_A
         );
         if ( ! $user ) return false;

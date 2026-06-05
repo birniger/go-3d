@@ -59,6 +59,9 @@ export class MultiplayerController {
 
   private pusher:   PusherInstance | null = null;
   private channel:  PusherChannel  | null = null;
+  /** True when Pusher has successfully subscribed — prevents the silent
+   *  reconciliation poll from advertising itself as "polling". */
+  private pusherConnected = false;
   private clockInterval: ReturnType<typeof setInterval> | null = null;
   private lastTickAt = Date.now();
 
@@ -101,6 +104,7 @@ export class MultiplayerController {
 
     this.channel = this.pusher.subscribe(`private-game-${this.gameState.id}`);
     this.channel.bind('pusher:subscription_succeeded', () => {
+      this.pusherConnected = true;
       this.callbacks.onConnectionStatus?.('live');
     });
     this.channel.bind('move',          (d: unknown) => this.handleMove(d as MovePayload));
@@ -111,6 +115,7 @@ export class MultiplayerController {
     this.channel.bind('undo-declined', (d: unknown) => this.callbacks.onUndoDeclined?.(d as UndoDeclinedPayload));
     this.channel.bind('pusher:subscription_error', () => {
       console.warn('Go3D: Pusher subscription failed — using polling fallback.');
+      this.pusherConnected = false;
       this.callbacks.onError('Realtime sync unavailable; using polling fallback.');
       this.startPolling();
     });
@@ -128,6 +133,7 @@ export class MultiplayerController {
 
   disconnect(): void {
     this.stopClock();
+    this.pusherConnected = false;
     if (this.channel)  { this.channel.unbind_all(); this.channel = null; }
     if (this.pusher)   { this.pusher.disconnect();  this.pusher  = null; }
     this.stopPolling();
@@ -294,7 +300,7 @@ export class MultiplayerController {
     if (this.pollInterval !== null) return;
     this.pollMoveNumber = 0;
     this.pollFailures = 0;
-    this.callbacks.onConnectionStatus?.('polling');
+    if (!this.pusherConnected) this.callbacks.onConnectionStatus?.('polling');
     this.pollInterval = setInterval(() => void this.joiningPoll(), 2000);
   }
 
@@ -348,7 +354,7 @@ export class MultiplayerController {
     try {
       const state = await Games.get(this.gameState.id);
       this.pollFailures = 0;
-      this.callbacks.onConnectionStatus?.('polling');
+      if (!this.pusherConnected) this.callbacks.onConnectionStatus?.('polling');
 
       if (state.moves.length < this.pollMoveNumber) {
         this.callbacks.onUndoApplied?.(state);
