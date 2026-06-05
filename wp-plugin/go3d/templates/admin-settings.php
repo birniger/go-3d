@@ -79,6 +79,228 @@ if ( ! empty( $_POST['go3d_bug_action'] ) && current_user_can( 'manage_options' 
       );
     ?>
   </div>
+  <p class="description" style="margin:0 0 4px;"><?php esc_html_e( 'Multiplayer games only — local hot-seat games are not recorded.', 'go3d' ); ?></p>
+
+  <!-- ── Detailed stats ──────────────────────────────────────────── -->
+  <?php
+    $go3d_d = Go3D_Stats::detail();
+
+    // Horizontal bar list: rows of [label, count, proportional bar].
+    $go3d_bars = function ( array $data, array $labels = [], string $color = '#2271b1' ) {
+      $max = max( 1, $data ? max( $data ) : 1 );
+      $sum = array_sum( $data );
+      if ( ! $sum ) { echo '<p style="color:#787c82;margin:4px 0;">' . esc_html__( 'No data yet.', 'go3d' ) . '</p>'; return; }
+      echo '<div style="display:flex;flex-direction:column;gap:5px;max-width:460px;">';
+      foreach ( $data as $k => $v ) {
+        $label = $labels[ $k ] ?? ucfirst( (string) $k );
+        $pct   = round( 100 * $v / $max );
+        $share = round( 100 * $v / $sum );
+        printf(
+          '<div style="display:flex;align-items:center;gap:10px;font-size:13px;">
+             <span style="width:120px;flex:none;color:#1d2327;">%s</span>
+             <span style="flex:1;background:#f0f0f1;border-radius:4px;height:14px;overflow:hidden;">
+               <span style="display:block;height:100%%;width:%d%%;background:%s;"></span>
+             </span>
+             <span style="width:96px;flex:none;color:#50575e;text-align:right;">%s (%d%%)</span>
+           </div>',
+          esc_html( $label ), (int) $pct, esc_attr( $color ),
+          esc_html( number_format_i18n( $v ) ), (int) $share
+        );
+      }
+      echo '</div>';
+    };
+
+    // Tiny sparkline as a row of vertical bars.
+    $go3d_spark = function ( array $series, string $color = '#2271b1' ) {
+      $counts = array_map( function ( $p ) { return (int) $p['count']; }, $series );
+      $max    = max( 1, $counts ? max( $counts ) : 1 );
+      $total  = array_sum( $counts );
+      echo '<div style="display:flex;align-items:flex-end;gap:3px;height:46px;">';
+      foreach ( $series as $p ) {
+        $h = max( 2, round( 42 * $p['count'] / $max ) );
+        printf(
+          '<span title="%s: %d" style="width:14px;flex:none;height:%dpx;background:%s;border-radius:2px 2px 0 0;opacity:.85;"></span>',
+          esc_attr( $p['day'] ), (int) $p['count'], (int) $h, esc_attr( $color )
+        );
+      }
+      echo '</div>';
+      printf( '<div style="color:#787c82;font-size:11px;margin-top:3px;">%s</div>',
+        esc_html( sprintf( __( '%s in the last 14 days', 'go3d' ), number_format_i18n( $total ) ) ) );
+    };
+
+    $go3d_fmt_dur = function ( $secs ) {
+      if ( $secs === null ) return '—';
+      $secs = (int) $secs;
+      if ( $secs < 90 )    return sprintf( _n( '%d sec', '%d secs', $secs, 'go3d' ), $secs );
+      if ( $secs < 5400 )  return sprintf( __( '%d min', 'go3d' ), (int) round( $secs / 60 ) );
+      return sprintf( __( '%.1f hrs', 'go3d' ), $secs / 3600 );
+    };
+
+    $go3d_o = $go3d_d['outcomes'];
+  ?>
+
+  <div style="display:flex;flex-wrap:wrap;gap:28px;max-width:1000px;margin:10px 0 6px;">
+    <!-- How games end -->
+    <div style="flex:1;min-width:380px;">
+      <h2 style="margin:6px 0 8px;"><?php esc_html_e( 'How games end', 'go3d' ); ?></h2>
+      <?php
+        $go3d_bars(
+          [ 'score' => $go3d_o['score'], 'resign' => $go3d_o['resign'], 'timeout' => $go3d_o['timeout'], 'draws' => $go3d_o['draws'] ],
+          [ 'score' => __( 'Played out (scored)', 'go3d' ), 'resign' => __( 'Resignation', 'go3d' ), 'timeout' => __( 'Timeout', 'go3d' ), 'draws' => __( 'Draw', 'go3d' ) ],
+          '#00a32a'
+        );
+      ?>
+      <p style="margin:10px 0 0;color:#50575e;font-size:13px;">
+        <?php printf(
+          esc_html__( 'Avg length: %1$s moves · %2$s. Finished games: %3$s.', 'go3d' ),
+          $go3d_o['avg_moves'] !== null ? esc_html( number_format_i18n( $go3d_o['avg_moves'], 1 ) ) : '—',
+          esc_html( $go3d_fmt_dur( $go3d_o['avg_secs'] ) ),
+          esc_html( number_format_i18n( $go3d_o['finished'] ) )
+        ); ?>
+      </p>
+    </div>
+
+    <!-- Colour balance -->
+    <div style="flex:1;min-width:300px;">
+      <h2 style="margin:6px 0 8px;"><?php esc_html_e( 'Black vs White', 'go3d' ); ?></h2>
+      <?php
+        $go3d_decided = $go3d_o['black_wins'] + $go3d_o['white_wins'];
+        if ( ! $go3d_decided ) {
+          echo '<p style="color:#787c82;">' . esc_html__( 'No decided games yet.', 'go3d' ) . '</p>';
+        } else {
+          $bp = round( 100 * $go3d_o['black_wins'] / $go3d_decided );
+          printf(
+            '<div style="display:flex;height:26px;border-radius:6px;overflow:hidden;max-width:380px;font-size:12px;color:#fff;">
+               <span style="width:%1$d%%;background:#1d2327;display:flex;align-items:center;justify-content:center;">%2$s</span>
+               <span style="flex:1;background:#787c82;display:flex;align-items:center;justify-content:center;">%3$s</span>
+             </div>
+             <div style="color:#50575e;font-size:13px;margin-top:6px;">%4$s</div>',
+            (int) $bp,
+            esc_html( $bp . '%' ),
+            esc_html( ( 100 - $bp ) . '%' ),
+            esc_html( sprintf( __( 'Black %1$s · White %2$s (decided games)', 'go3d' ),
+              number_format_i18n( $go3d_o['black_wins'] ), number_format_i18n( $go3d_o['white_wins'] ) ) )
+          );
+        }
+      ?>
+    </div>
+  </div>
+
+  <!-- What people play -->
+  <h2 style="margin:18px 0 8px;"><?php esc_html_e( 'What people play', 'go3d' ); ?></h2>
+  <div style="display:flex;flex-wrap:wrap;gap:32px;max-width:1000px;">
+    <div>
+      <h4 style="margin:0 0 6px;color:#50575e;"><?php esc_html_e( 'Board size (N³ cube/stack, or sphere frequency)', 'go3d' ); ?></h4>
+      <?php
+        $go3d_bs = $go3d_d['dist']['board_size'];
+        ksort( $go3d_bs, SORT_NUMERIC );
+        $go3d_bars( $go3d_bs, [], '#2271b1' );
+      ?>
+    </div>
+    <div>
+      <h4 style="margin:0 0 6px;color:#50575e;"><?php esc_html_e( 'Time control', 'go3d' ); ?></h4>
+      <?php $go3d_bars( $go3d_d['dist']['time_control'],
+        [ 'none' => __( 'Correspondence', 'go3d' ), 'absolute' => __( 'Absolute', 'go3d' ), 'fischer' => __( 'Fischer', 'go3d' ), 'byoyomi' => __( 'Byo-yomi', 'go3d' ) ],
+        '#8c5e00' ); ?>
+    </div>
+    <div>
+      <h4 style="margin:0 0 6px;color:#50575e;"><?php esc_html_e( 'Scoring', 'go3d' ); ?></h4>
+      <?php $go3d_bars( $go3d_d['dist']['scoring_mode'],
+        [ 'chinese' => __( 'Chinese', 'go3d' ), 'japanese' => __( 'Japanese', 'go3d' ) ], '#3858e9' ); ?>
+    </div>
+  </div>
+
+  <!-- Engagement + ratings -->
+  <div style="display:flex;flex-wrap:wrap;gap:28px;max-width:1000px;margin-top:18px;">
+    <div style="flex:1;min-width:300px;">
+      <h2 style="margin:6px 0 8px;"><?php esc_html_e( 'Engagement', 'go3d' ); ?></h2>
+      <table class="widefat striped" style="max-width:380px;">
+        <tbody>
+          <?php
+            $go3d_e = $go3d_d['engagement'];
+            $go3d_row = function ( $label, $value ) {
+              printf( '<tr><td>%s</td><td style="text-align:right;font-weight:600;">%s</td></tr>',
+                esc_html( $label ), esc_html( number_format_i18n( (int) $value ) ) );
+            };
+            $go3d_row( __( 'Active — last 24h', 'go3d' ),       $go3d_e['active1'] );
+            $go3d_row( __( 'Active — last 7 days', 'go3d' ),    $go3d_e['active7'] );
+            $go3d_row( __( 'Active — last 30 days', 'go3d' ),   $go3d_e['active30'] );
+            $go3d_row( __( 'Players who have played', 'go3d' ), $go3d_e['played'] );
+            $go3d_row( __( 'Returning (2+ games)', 'go3d' ),    $go3d_e['returning'] );
+          ?>
+        </tbody>
+      </table>
+    </div>
+    <div style="flex:1;min-width:300px;">
+      <h2 style="margin:6px 0 8px;"><?php esc_html_e( 'Ratings', 'go3d' ); ?></h2>
+      <?php $go3d_el = $go3d_d['elo']; ?>
+      <p style="font-size:14px;color:#50575e;">
+        <?php printf(
+          esc_html__( 'Average ELO %1$s · range %2$s–%3$s (players with games).', 'go3d' ),
+          $go3d_el['avg'] !== null ? esc_html( number_format_i18n( $go3d_el['avg'] ) ) : '—',
+          $go3d_el['min'] !== null ? esc_html( number_format_i18n( $go3d_el['min'] ) ) : '—',
+          $go3d_el['max'] !== null ? esc_html( number_format_i18n( $go3d_el['max'] ) ) : '—'
+        ); ?>
+      </p>
+    </div>
+  </div>
+
+  <!-- Top players -->
+  <div style="display:flex;flex-wrap:wrap;gap:28px;max-width:1000px;margin-top:8px;">
+    <div style="flex:1;min-width:300px;">
+      <h4 style="margin:8px 0 6px;color:#50575e;"><?php esc_html_e( 'Top by rating', 'go3d' ); ?></h4>
+      <?php if ( empty( $go3d_d['top_elo'] ) ) : ?>
+        <p style="color:#787c82;"><?php esc_html_e( 'No rated players yet.', 'go3d' ); ?></p>
+      <?php else : ?>
+        <table class="widefat striped" style="max-width:380px;">
+          <thead><tr><th><?php esc_html_e( 'Player', 'go3d' ); ?></th><th style="text-align:right;"><?php esc_html_e( 'ELO', 'go3d' ); ?></th><th style="text-align:right;"><?php esc_html_e( 'W/L', 'go3d' ); ?></th></tr></thead>
+          <tbody>
+            <?php foreach ( $go3d_d['top_elo'] as $p ) : ?>
+              <tr>
+                <td><?php echo esc_html( $p['username'] ); ?></td>
+                <td style="text-align:right;font-weight:600;"><?php echo esc_html( number_format_i18n( (int) $p['elo'] ) ); ?></td>
+                <td style="text-align:right;color:#50575e;"><?php echo esc_html( (int) $p['wins'] . '/' . (int) $p['losses'] ); ?></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
+    </div>
+    <div style="flex:1;min-width:300px;">
+      <h4 style="margin:8px 0 6px;color:#50575e;"><?php esc_html_e( 'Most active', 'go3d' ); ?></h4>
+      <?php if ( empty( $go3d_d['top_games'] ) ) : ?>
+        <p style="color:#787c82;"><?php esc_html_e( 'No games played yet.', 'go3d' ); ?></p>
+      <?php else : ?>
+        <table class="widefat striped" style="max-width:380px;">
+          <thead><tr><th><?php esc_html_e( 'Player', 'go3d' ); ?></th><th style="text-align:right;"><?php esc_html_e( 'Games', 'go3d' ); ?></th><th style="text-align:right;"><?php esc_html_e( 'ELO', 'go3d' ); ?></th></tr></thead>
+          <tbody>
+            <?php foreach ( $go3d_d['top_games'] as $p ) : ?>
+              <tr>
+                <td><?php echo esc_html( $p['username'] ); ?></td>
+                <td style="text-align:right;font-weight:600;"><?php echo esc_html( number_format_i18n( (int) $p['games_played'] ) ); ?></td>
+                <td style="text-align:right;color:#50575e;"><?php echo esc_html( number_format_i18n( (int) $p['elo'] ) ); ?></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
+    </div>
+  </div>
+
+  <!-- Trends -->
+  <h2 style="margin:18px 0 8px;"><?php esc_html_e( 'Last 14 days', 'go3d' ); ?></h2>
+  <div style="display:flex;flex-wrap:wrap;gap:40px;max-width:1000px;">
+    <div>
+      <h4 style="margin:0 0 6px;color:#50575e;"><?php esc_html_e( 'New sign-ups', 'go3d' ); ?></h4>
+      <?php $go3d_spark( $go3d_d['trend_signups'], '#2271b1' ); ?>
+    </div>
+    <div>
+      <h4 style="margin:0 0 6px;color:#50575e;"><?php esc_html_e( 'Games created', 'go3d' ); ?></h4>
+      <?php $go3d_spark( $go3d_d['trend_games'], '#00a32a' ); ?>
+    </div>
+  </div>
+
+  <hr style="margin:24px 0;">
 
   <!-- ── Setup guide ─────────────────────────────────────────────── -->
   <div class="go3d-setup-guide card" style="max-width:800px;padding:4px 20px 16px;margin:16px 0;">
