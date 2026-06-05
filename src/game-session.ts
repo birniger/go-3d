@@ -134,6 +134,7 @@ function resetViewControls(): void {
     document.getElementById(id)?.classList.remove('go3d-vc-on');
   }
   document.getElementById('go3d-game-screen')?.removeAttribute('data-go3d-mode');
+  document.getElementById('go3d-game-screen')?.classList.remove('go3d-mobile-controls-open');
   document.getElementById('go3d-history-list')?.replaceChildren();
   setConnectionStatus('local');
   setCaptureCounts(0, 0);
@@ -740,7 +741,9 @@ export class GameSession {
     if (mobileToggle && mobilePanel) {
       mobileToggle.onclick = () => {
         const open = mobilePanel.classList.toggle('go3d-mobile-panel-open');
+        document.getElementById('go3d-game-screen')?.classList.toggle('go3d-mobile-controls-open', open);
         mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) setMore(false);
       };
     }
     const bind = (id: string, fn: () => void) => {
@@ -844,10 +847,16 @@ export class GameSession {
   }
 
   private bindButtons(): void {
-    document.getElementById('go3d-undo-btn')!.onclick   = () => void this.doUndo();
-    document.getElementById('go3d-pass-btn')!.onclick   = () => void this.doPass();
-    document.getElementById('go3d-resign-btn')!.onclick = () => void this.doResign();
-    document.getElementById('go3d-back-to-lobby-game')!.onclick = () => void this.exit();
+    // Null-safe: the standalone (GitHub Pages) template ships a thinner DOM than
+    // the WordPress embed, so not every control exists in both builds.
+    const on = (id: string, fn: () => void) => {
+      const el = document.getElementById(id);
+      if (el) el.onclick = fn;
+    };
+    on('go3d-undo-btn',   () => void this.doUndo());
+    on('go3d-pass-btn',   () => void this.doPass());
+    on('go3d-resign-btn', () => void this.doResign());
+    on('go3d-back-to-lobby-game', () => void this.exit());
   }
 
   /** Fill the top player bar with usernames + ELO (best-effort, non-blocking). */
@@ -1163,7 +1172,9 @@ export class SphereGameSession {
     if (mobileToggle && mobilePanel) {
       mobileToggle.onclick = () => {
         const open = mobilePanel.classList.toggle('go3d-mobile-panel-open');
+        document.getElementById('go3d-game-screen')?.classList.toggle('go3d-mobile-controls-open', open);
         mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) setMore(false);
       };
     }
     // "More" popover — groups the secondary actions with Pass/Resign on mobile.
@@ -1242,10 +1253,16 @@ export class SphereGameSession {
   }
 
   private bindButtons(): void {
-    document.getElementById('go3d-undo-btn')!.onclick   = () => void this.doUndo();
-    document.getElementById('go3d-pass-btn')!.onclick   = () => void this.doPass();
-    document.getElementById('go3d-resign-btn')!.onclick = () => void this.doResign();
-    document.getElementById('go3d-back-to-lobby-game')!.onclick = () => void this.exit();
+    // Null-safe: the standalone (GitHub Pages) template ships a thinner DOM than
+    // the WordPress embed, so not every control exists in both builds.
+    const on = (id: string, fn: () => void) => {
+      const el = document.getElementById(id);
+      if (el) el.onclick = fn;
+    };
+    on('go3d-undo-btn',   () => void this.doUndo());
+    on('go3d-pass-btn',   () => void this.doPass());
+    on('go3d-resign-btn', () => void this.doResign());
+    on('go3d-back-to-lobby-game', () => void this.exit());
   }
 
   private fillPlayerBar(): void {

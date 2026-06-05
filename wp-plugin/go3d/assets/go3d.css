@@ -913,6 +913,10 @@
     transform: none;
   }
 
+  #go3d-game-screen.go3d-mobile-controls-open #go3d-game-actions {
+    display: none;
+  }
+
   #go3d-replay-bar {
     display: none !important;
   }

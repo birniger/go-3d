@@ -445,10 +445,6 @@
           <button class="go3d-btn-ghost go3d-btn-sm" data-go3d-cursor="0,1,0">Up</button>
           <button class="go3d-btn-primary go3d-btn-sm" id="go3d-mobile-place">Place</button>
         </div>
-        <div class="go3d-mobile-row go3d-mobile-sphere-only">
-          <span class="go3d-vc-label">Sphere</span>
-          <span class="go3d-mobile-note">Rotate, then tap a visible empty node.</span>
-        </div>
         <div class="go3d-mobile-row">
           <span class="go3d-vc-label">Replay</span>
           <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-replay-prev">Prev</button>
