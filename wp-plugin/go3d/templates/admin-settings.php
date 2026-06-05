@@ -18,6 +18,68 @@ if ( ! empty( $_POST['go3d_bug_action'] ) && current_user_can( 'manage_options' 
 
   <?php settings_errors( 'go3d_messages' ); ?>
 
+  <!-- ── Overview / statistics ───────────────────────────────────── -->
+  <?php
+    $go3d_stats = Go3D_Stats::summary();
+    $go3d_u     = $go3d_stats['users'];
+    $go3d_g     = $go3d_stats['games'];
+    $go3d_modes = $go3d_stats['modes'];
+
+    // Render one stat card. $sub is an optional smaller line under the number.
+    $go3d_card = function ( $label, $value, $sub = '', $accent = '#2271b1' ) {
+      printf(
+        '<div style="flex:1;min-width:150px;background:#fff;border:1px solid #dcdcde;border-top:3px solid %s;border-radius:6px;padding:12px 16px;">
+           <div style="font-size:26px;font-weight:600;line-height:1.1;">%s</div>
+           <div style="color:#50575e;font-size:13px;margin-top:2px;">%s</div>
+           %s
+         </div>',
+        esc_attr( $accent ),
+        esc_html( number_format_i18n( (int) $value ) ),
+        esc_html( $label ),
+        $sub ? '<div style="color:#787c82;font-size:11px;margin-top:4px;">' . esc_html( $sub ) . '</div>' : ''
+      );
+    };
+  ?>
+  <h2 style="margin-top:18px;"><?php esc_html_e( 'Overview', 'go3d' ); ?></h2>
+  <div style="display:flex;flex-wrap:wrap;gap:12px;max-width:1000px;margin:8px 0 6px;">
+    <?php
+      $go3d_card(
+        __( 'Player accounts', 'go3d' ),
+        $go3d_u['total'],
+        sprintf( __( '%1$s verified · %2$s active (7d)', 'go3d' ), number_format_i18n( $go3d_u['verified'] ), number_format_i18n( $go3d_u['active7'] ) ),
+        '#2271b1'
+      );
+      $go3d_card(
+        __( 'New players (30d)', 'go3d' ),
+        $go3d_u['new30'],
+        sprintf( __( '%s in the last 7 days', 'go3d' ), number_format_i18n( $go3d_u['new7'] ) ),
+        '#2271b1'
+      );
+      $go3d_card(
+        __( 'Games total', 'go3d' ),
+        $go3d_g['total'],
+        sprintf( __( '%1$s open · %2$s active · %3$s finished', 'go3d' ),
+          number_format_i18n( $go3d_g['open'] ), number_format_i18n( $go3d_g['active'] ), number_format_i18n( $go3d_g['finished'] ) ),
+        '#00a32a'
+      );
+      $go3d_card(
+        __( 'Games finished (30d)', 'go3d' ),
+        $go3d_g['finished30'],
+        sprintf( __( '%s in the last 7 days', 'go3d' ), number_format_i18n( $go3d_g['finished7'] ) ),
+        '#00a32a'
+      );
+      $go3d_card(
+        __( 'Stones placed', 'go3d' ),
+        $go3d_stats['total_moves'],
+        sprintf( __( 'Cube %1$s · Stack %2$s · Sphere %3$s', 'go3d' ),
+          number_format_i18n( $go3d_modes['cube'] ?? 0 ),
+          number_format_i18n( $go3d_modes['stack'] ?? 0 ),
+          number_format_i18n( $go3d_modes['sphere'] ?? 0 ) ),
+        '#8c5e00'
+      );
+    ?>
+  </div>
+
   <!-- ── Setup guide ─────────────────────────────────────────────── -->
   <div class="go3d-setup-guide card" style="max-width:800px;padding:4px 20px 16px;margin:16px 0;">
     <h2><?php esc_html_e( 'Quick setup guide', 'go3d' ); ?></h2>
