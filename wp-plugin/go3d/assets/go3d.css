@@ -386,7 +386,10 @@
 /* The WebGL canvas is appended to <body>; pin it to the viewport and sit it
    behind the overlay UI. `position: fixed` is required — without it the canvas
    flows after page content (e.g. a 100vh standalone shell) and lands off-screen. */
-#go3d-game-screen canvas, body > canvas { position: fixed; inset: 0; z-index: 1; }
+/* touch-action: none stops the browser from scrolling/zooming the page when a
+   tap or drag lands on the board (otherwise placing a stone on mobile scrolls
+   the page instead of registering on the canvas). */
+#go3d-game-screen canvas, body > canvas { position: fixed; inset: 0; z-index: 1; touch-action: none; }
 
 #go3d-game-topbar {
   position: absolute; top: 0; left: 0; right: 0;
@@ -875,11 +878,15 @@
     justify-content: space-between;
   }
 
+  /* Actions (Pass/Resign/Undo) live bottom-right; the view controls
+     (Score/Moves/Help) move to the bottom-LEFT so the two groups no longer
+     stack on top of each other at this breakpoint. */
   #go3d-view-controls {
     top: auto;
-    right: 0.75rem;
+    left: 0.75rem;
+    right: auto;
     bottom: 5.2rem;
-    align-items: flex-end;
+    align-items: flex-start;
   }
 
   #go3d-slice-group,
@@ -887,10 +894,11 @@
     display: none !important;
   }
 
+  /* Stack-mode layer banner sits just above the left-hand view controls. */
   #go3d-layer-banner {
     top: auto;
     left: 0.75rem;
-    bottom: 5.25rem;
+    bottom: 8.6rem;
     transform: none;
   }
 
@@ -954,17 +962,15 @@
     flex-direction: column;
   }
 
+  /* Actions stack vertically on the right; view controls stay bottom-left, so
+     the two columns sit side-by-side without overlapping. */
   #go3d-game-actions {
     flex-direction: column;
     gap: 0.35rem;
   }
 
-  #go3d-view-controls {
-    bottom: 8.4rem;
-  }
-
   #go3d-layer-banner {
-    bottom: 8.4rem;
+    bottom: 8.6rem;
     max-width: 44vw;
   }
 }

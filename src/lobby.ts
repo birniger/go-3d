@@ -125,7 +125,7 @@ export class Lobby {
               .querySelector<HTMLInputElement>('[name=email]')!.value);
       await AuthState.resendCode(email);
       errEl.style.color = '#0f0';
-      errEl.textContent = '✓ A new code is on its way. Check your inbox.';
+      errEl.textContent = 'A new code is on its way. Check your inbox.';
     });
     document.getElementById('go3d-verify-back')!.addEventListener('click', e => {
       e.preventDefault();
@@ -153,7 +153,7 @@ export class Lobby {
       try {
         await AuthState.requestReset(email);
         errEl.style.color = '#0f0';
-        errEl.textContent = '✓ If that email exists, a reset link has been sent.';
+        errEl.textContent = 'If that email exists, a reset link has been sent.';
       } catch {
         errEl.textContent = 'Something went wrong. Please try again.';
       }
@@ -216,7 +216,7 @@ export class Lobby {
       try {
         await AuthState.resetPassword(token, pw);
         errEl.style.color = '#0f0';
-        errEl.textContent = '✓ Password changed! You can now log in.';
+        errEl.textContent = 'Password changed! You can now log in.';
         wrap.remove();
       } catch (err) {
         errEl.textContent = apiErrorMessage(err);
@@ -568,7 +568,7 @@ export class Lobby {
     const enter = document.getElementById('go3d-open-game-enter') as HTMLButtonElement | null;
     const cancel = document.getElementById('go3d-open-game-cancel') as HTMLButtonElement | null;
 
-    label.textContent = `🟡 Waiting for opponent — ${description}`;
+    label.textContent = `Waiting for opponent — ${description}`;
     if (enter) enter.style.display = 'none';
     if (cancel) cancel.onclick = async () => {
       if (!(await confirmModal('Cancel this open game? It will be removed from the lobby.', { title: 'Cancel game', confirm: 'Cancel game', cancel: 'Keep it', danger: true }))) return;
@@ -592,7 +592,7 @@ export class Lobby {
         const oppName = state.player2_name ?? `Player ${state.player2_id}`;
         const oppElo = state.player2_elo ? ` (${state.player2_elo})` : '';
         const label = document.getElementById('go3d-open-game-bar-label');
-        if (label) label.textContent = `🟢 ${oppName}${oppElo} joined!`;
+        if (label) label.textContent = `${oppName}${oppElo} joined!`;
         const enter = document.getElementById('go3d-open-game-enter') as HTMLButtonElement | null;
         if (enter) {
           enter.style.display = '';
@@ -744,7 +744,7 @@ export class Lobby {
       const gamesHtml = recent_games.map(g => {
         const won  = g.winner_id === userId;
         const lost = g.winner_id !== null && g.winner_id !== userId;
-        const badge = won ? '✓ Win' : lost ? '✗ Loss' : '— Draw';
+        const badge = won ? 'Win' : lost ? 'Loss' : 'Draw';
         // Show the ELO delta from THIS profile's perspective: pick p1's or p2's
         // change depending on which slot this user occupied in that game.
         const delta = g.player1_id === userId ? g.elo_change_p1 : g.elo_change_p2;
@@ -813,7 +813,7 @@ export class Lobby {
           try {
             await Users.updateProfile({ bio, avatar_url: avUrl || undefined });
             errEl.style.color = '#0f0';
-            errEl.textContent = '✓ Saved.';
+            errEl.textContent = 'Saved.';
           } catch (err) {
             errEl.textContent = apiErrorMessage(err);
           }
@@ -827,7 +827,7 @@ export class Lobby {
           try {
             await Users.updateNotifications({ notify_idle_hours: idleOn ? 24 : 0, notify_timeout_mins: 0 });
             errEl.style.color = '#0f0';
-            errEl.textContent = '✓ Saved.';
+            errEl.textContent = 'Saved.';
           } catch (err) {
             errEl.textContent = apiErrorMessage(err);
           }

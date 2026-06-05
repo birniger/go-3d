@@ -1346,7 +1346,11 @@ export class Renderer {
   setCursorPos(x: number, y: number, z: number) {
     const s = this.game.size;
     const nx = Math.max(0, Math.min(s-1, x));
-    const ny = Math.max(0, Math.min(s-1, y));
+    // In stack mode only the active build layer accepts stones and only it is
+    // drawn, so pin the cursor's height to it — otherwise the highlight sits on
+    // a hidden layer and appears to vanish. (Vertical cursor moves become no-ops,
+    // which is correct: you can't place off the active layer.)
+    const ny = this.stackLayer !== null ? this.stackLayer : Math.max(0, Math.min(s-1, y));
     const nz = Math.max(0, Math.min(s-1, z));
     if (nx !== this.cursorPos.x || ny !== this.cursorPos.y || nz !== this.cursorPos.z)
       this.rippleTimer = 1;

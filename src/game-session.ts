@@ -279,7 +279,14 @@ export class GameSession {
   private replayStep = 0;
   private undoReloading = false;
   private readonly keyHandler   = (e: KeyboardEvent) => this.onKeydown(e);
-  private readonly mouseHandler = () => { if (this.cursorMode) this.deactivateCursor(); };
+  // Switching to the physical mouse drops keyboard/precision-cursor mode. This
+  // must only fire for a REAL mouse: on touch devices every tap synthesises a
+  // mousemove, which previously deactivated the cursor between a precision
+  // button press and the "Place" tap — so the cursor reset to centre and the
+  // mobile controls appeared not to work. Filtering on pointerType fixes that.
+  private readonly pointerHandler = (e: PointerEvent) => {
+    if (e.pointerType === 'mouse' && this.cursorMode) this.deactivateCursor();
+  };
 
   constructor(
     private state: GameState,
@@ -340,7 +347,7 @@ export class GameSession {
     renderMoveHistory(this.state);
     if (this.activeLayer !== null) this.updateLayerBanner();
     window.addEventListener('keydown', this.keyHandler);
-    window.addEventListener('mousemove', this.mouseHandler);
+    window.addEventListener('pointermove', this.pointerHandler);
     maybeShowOnboarding();
     music.enterGame();
   }
@@ -457,8 +464,8 @@ export class GameSession {
     const iWon = this.isLocal ? false : p.winner_id === myId;
     let msg: string;
     if (p.winner_id === null)   msg = 'Game over — draw.';
-    else if (this.isLocal)      msg = `${colourName(p.winner_id as 1 | 2)} wins! 🎉`;
-    else if (iWon)              msg = 'You won! 🎉';
+    else if (this.isLocal)      msg = `${colourName(p.winner_id as 1 | 2)} wins!`;
+    else if (iWon)              msg = 'You won!';
     else                        msg = 'You lost.';
 
     const reason = p.end_reason ? ` (${p.end_reason.replace(/_/g, ' ')})` : '';
@@ -820,7 +827,7 @@ export class GameSession {
     document.getElementById('go3d-undo-btn')!.onclick   = () => void this.doUndo();
     document.getElementById('go3d-pass-btn')!.onclick   = () => void this.doPass();
     document.getElementById('go3d-resign-btn')!.onclick = () => void this.doResign();
-    document.getElementById('go3d-back-to-lobby-game')!.onclick = () => this.exit();
+    document.getElementById('go3d-back-to-lobby-game')!.onclick = () => void this.exit();
   }
 
   /** Fill the top player bar with usernames + ELO (best-effort, non-blocking). */
@@ -853,14 +860,25 @@ export class GameSession {
     }
   }
 
-  private exit(): void {
+  private async exit(): Promise<void> {
+    // Leaving a live timed game forfeits it (your clock keeps running on the
+    // server), so confirm and resign on the way out. Correspondence games have
+    // no clock — you can come and go freely — and finished/local games never
+    // need a forfeit.
+    if (!this.finished && !this.isLocal && this.state.status === 'active' && this.state.time_control !== 'none') {
+      const ok = await confirmModal('This is a timed game — leaving forfeits it. Resign and leave?', {
+        title: 'Leave game', confirm: 'Resign & leave', cancel: 'Keep playing', danger: true,
+      });
+      if (!ok) return;
+      try { await this.controller.submitResign(); } catch { /* surfaced via onError */ }
+    }
     this.dispose();
     this.onExit();
   }
 
   dispose(): void {
     window.removeEventListener('keydown', this.keyHandler);
-    window.removeEventListener('mousemove', this.mouseHandler);
+    window.removeEventListener('pointermove', this.pointerHandler);
     resetViewControls();
     this.controller.disconnect();
     this.renderer.dispose();
@@ -1050,8 +1068,8 @@ export class SphereGameSession {
     const iWon = this.isLocal ? false : p.winner_id === myId;
     let msg: string;
     if (p.winner_id === null)   msg = 'Game over — draw.';
-    else if (this.isLocal)      msg = `${colourName(p.winner_id as 1 | 2)} wins! 🎉`;
-    else if (iWon)              msg = 'You won! 🎉';
+    else if (this.isLocal)      msg = `${colourName(p.winner_id as 1 | 2)} wins!`;
+    else if (iWon)              msg = 'You won!';
     else                        msg = 'You lost.';
 
     const reason = p.end_reason ? ` (${p.end_reason.replace(/_/g, ' ')})` : '';
@@ -1189,7 +1207,7 @@ export class SphereGameSession {
     document.getElementById('go3d-undo-btn')!.onclick   = () => void this.doUndo();
     document.getElementById('go3d-pass-btn')!.onclick   = () => void this.doPass();
     document.getElementById('go3d-resign-btn')!.onclick = () => void this.doResign();
-    document.getElementById('go3d-back-to-lobby-game')!.onclick = () => this.exit();
+    document.getElementById('go3d-back-to-lobby-game')!.onclick = () => void this.exit();
   }
 
   private fillPlayerBar(): void {
@@ -1221,7 +1239,18 @@ export class SphereGameSession {
     }
   }
 
-  private exit(): void { this.dispose(); this.onExit(); }
+  private async exit(): Promise<void> {
+    // See GameSession.exit — leaving a live timed game forfeits it.
+    if (!this.finished && !this.isLocal && this.state.status === 'active' && this.state.time_control !== 'none') {
+      const ok = await confirmModal('This is a timed game — leaving forfeits it. Resign and leave?', {
+        title: 'Leave game', confirm: 'Resign & leave', cancel: 'Keep playing', danger: true,
+      });
+      if (!ok) return;
+      try { await this.controller.submitResign(); } catch { /* surfaced via onError */ }
+    }
+    this.dispose();
+    this.onExit();
+  }
 
   dispose(): void {
     resetViewControls();

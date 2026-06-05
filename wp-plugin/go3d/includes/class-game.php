@@ -199,10 +199,23 @@ class Go3D_Game {
         $player_slot = self::player_slot( $game, $user_id );
         if ( ! $player_slot )
             return [ 'ok' => false, 'error' => 'You are not a player in this game.', 'code' => 403 ];
-        if ( (int)$game['current_player'] !== $player_slot )
-            return [ 'ok' => false, 'error' => 'It is not your turn.', 'code' => 409 ];
 
         $type = $move_data['type'] ?? '';
+
+        // Resignation is allowed at ANY time — including the opponent's turn —
+        // so it must be handled before the turn-order check below. The clock is
+        // irrelevant once the game ends, so we pass the stored times through.
+        if ( $type === 'resign' ) {
+            return self::end_game(
+                $game, $user_id, $player_slot, 'resign', null,
+                $game['p1_time_ms'] !== null ? (int) $game['p1_time_ms'] : null,
+                $game['p2_time_ms'] !== null ? (int) $game['p2_time_ms'] : null,
+                []
+            );
+        }
+
+        if ( (int)$game['current_player'] !== $player_slot )
+            return [ 'ok' => false, 'error' => 'It is not your turn.', 'code' => 409 ];
 
         // Clock deduction is SERVER-AUTHORITATIVE: we never trust a client-sent
         // time_ms. The elapsed time is the wall-clock gap between this move and
@@ -267,10 +280,6 @@ class Go3D_Game {
                     if ( $player_slot === 2 && $p2_time_ms !== null ) $p2_time_ms += $inc;
                 }
             }
-        }
-
-        if ( $type === 'resign' ) {
-            return self::end_game( $game, $user_id, $player_slot, 'resign', $time_ms, $p1_time_ms, $p2_time_ms, $byo );
         }
 
         if ( $type === 'pass' ) {
