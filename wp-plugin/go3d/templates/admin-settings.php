@@ -302,21 +302,22 @@ if ( ! empty( $_POST['go3d_bug_action'] ) && current_user_can( 'manage_options' 
     $go3d_open_count  = Go3D_Bug_Report::unresolved_count();
   ?>
   <h2 style="margin-top:32px;">
-    <?php esc_html_e( 'Bug reports', 'go3d' ); ?>
+    <?php esc_html_e( 'Feedback &amp; bug reports', 'go3d' ); ?>
     <?php if ( $go3d_open_count > 0 ) : ?>
       <span class="go3d-bug-badge" style="background:#d63638;color:#fff;border-radius:10px;padding:1px 9px;font-size:12px;vertical-align:middle;"><?php echo (int) $go3d_open_count; ?> <?php esc_html_e( 'open', 'go3d' ); ?></span>
     <?php endif; ?>
   </h2>
-  <p class="description"><?php esc_html_e( 'Reports players submit from the lobby (“Report a bug”).', 'go3d' ); ?></p>
+  <p class="description"><?php esc_html_e( 'Bug reports, feature requests and improvements players submit from the lobby.', 'go3d' ); ?></p>
 
   <?php if ( empty( $go3d_reports ) ) : ?>
-    <p><em><?php esc_html_e( 'No bug reports yet.', 'go3d' ); ?></em></p>
+    <p><em><?php esc_html_e( 'No feedback yet.', 'go3d' ); ?></em></p>
   <?php else : ?>
     <table class="widefat striped" style="max-width:1000px;margin-top:8px;">
       <thead>
         <tr>
           <th style="width:140px;"><?php esc_html_e( 'When', 'go3d' ); ?></th>
-          <th style="width:130px;"><?php esc_html_e( 'Player', 'go3d' ); ?></th>
+          <th style="width:120px;"><?php esc_html_e( 'Type', 'go3d' ); ?></th>
+          <th style="width:120px;"><?php esc_html_e( 'Player', 'go3d' ); ?></th>
           <th><?php esc_html_e( 'Report', 'go3d' ); ?></th>
           <th style="width:170px;"><?php esc_html_e( 'Actions', 'go3d' ); ?></th>
         </tr>
@@ -327,6 +328,17 @@ if ( ! empty( $_POST['go3d_bug_action'] ) && current_user_can( 'manage_options' 
             <td>
               <?php echo esc_html( get_date_from_gmt( $r['created_at'], 'Y-m-d H:i' ) ); ?>
               <?php if ( $r['resolved'] ) : ?><br><span style="color:#46b450;">✔ <?php esc_html_e( 'resolved', 'go3d' ); ?></span><?php endif; ?>
+            </td>
+            <td>
+              <?php
+                $go3d_type   = $r['type'] ?? 'bug';
+                $go3d_labels = [ 'bug' => __( 'Bug', 'go3d' ), 'feature' => __( 'Feature', 'go3d' ), 'improvement' => __( 'Improvement', 'go3d' ) ];
+                $go3d_colors = [ 'bug' => '#d63638', 'feature' => '#2271b1', 'improvement' => '#8c5e00' ];
+                $go3d_bg     = $go3d_colors[ $go3d_type ] ?? '#646970';
+              ?>
+              <span style="background:<?php echo esc_attr( $go3d_bg ); ?>;color:#fff;border-radius:10px;padding:1px 9px;font-size:11px;white-space:nowrap;">
+                <?php echo esc_html( $go3d_labels[ $go3d_type ] ?? ucfirst( $go3d_type ) ); ?>
+              </span>
             </td>
             <td>
               <?php echo $r['username'] ? esc_html( $r['username'] ) : '<em>' . esc_html__( 'anonymous', 'go3d' ) . '</em>'; ?>

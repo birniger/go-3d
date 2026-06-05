@@ -368,6 +368,6 @@ export const Users = {
 };
 
 export const BugReports = {
-  create: (message: string, context = '') =>
-    post<{ message: string }>('/bug-report', { message, context }),
+  create: (message: string, type = 'bug', context = '') =>
+    post<{ message: string }>('/bug-report', { message, type, context }),
 };

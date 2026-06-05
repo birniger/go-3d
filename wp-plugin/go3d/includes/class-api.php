@@ -41,9 +41,10 @@ class Go3D_API {
         // Logged-in users are attributed via JWT; anonymous reports are allowed too.
         $user_id = Go3D_JWT::current_user_id() ?? 0;
         $message = (string) ( $req->get_param( 'message' ) ?? '' );
+        $type    = sanitize_text_field( (string) ( $req->get_param( 'type' ) ?? 'bug' ) );
         $context = (string) ( $req->get_param( 'context' ) ?? '' );
 
-        $result = Go3D_Bug_Report::create( (int) $user_id, $message, $context );
+        $result = Go3D_Bug_Report::create( (int) $user_id, $message, $type, $context );
         if ( ! $result['ok'] ) return self::error( $result['error'], $result['code'] );
 
         return self::ok( [ 'message' => 'Thanks! Your report was sent.' ], 201 );

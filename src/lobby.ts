@@ -297,18 +297,26 @@ export class Lobby {
     });
   }
 
-  /** Prompt for a bug description and submit it to the admin inbox. */
+  /** Prompt for feedback (bug / feature / improvement) and send it to the admin inbox. */
   private async reportBug(): Promise<void> {
-    const message = await promptModal(
-      "Found a bug or something confusing? Describe what happened and we'll take a look.",
-      { title: 'Report a bug', confirm: 'Send report', placeholder: 'What went wrong? What were you doing?' },
+    const result = await promptModal(
+      'Tell us what you ran into or what you’d like to see. Pick a type, then describe it.',
+      {
+        title: 'Send feedback',
+        confirm: 'Send',
+        placeholder: 'What happened, or what would you like?',
+        categories: [
+          { value: 'bug',         label: 'Bug report' },
+          { value: 'feature',     label: 'Feature request' },
+          { value: 'improvement', label: 'Improvement' },
+        ],
+      },
     );
-    if (!message) return;
+    if (!result) return;
     try {
-      // Context helps triage: which screen + a short UA hint.
       const context = `lobby · ${navigator.platform || ''}`.trim();
-      await BugReports.create(message, context);
-      showToast('Thanks! Your report was sent.', 'success');
+      await BugReports.create(result.text, result.category, context);
+      showToast('Thanks! Your feedback was sent.', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
     }

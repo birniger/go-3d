@@ -12,7 +12,9 @@ class Go3D_Bug_Report {
      *
      * @return array{ok:true,id:int}|array{ok:false,error:string,code:int}
      */
-    public static function create( int $user_id, string $message, string $context = '' ): array {
+    const TYPES = [ 'bug', 'feature', 'improvement' ];
+
+    public static function create( int $user_id, string $message, string $type = 'bug', string $context = '' ): array {
         global $wpdb;
 
         // Rate limit: 10 reports per IP per hour to blunt spam.
@@ -22,6 +24,8 @@ class Go3D_Bug_Report {
         if ( $cnt >= 10 ) {
             return [ 'ok' => false, 'error' => 'Too many reports just now. Please try again later.', 'code' => 429 ];
         }
+
+        $type = in_array( $type, self::TYPES, true ) ? $type : 'bug';
 
         // Strip any markup — reports are shown as plain text in wp-admin.
         $message = trim( wp_strip_all_tags( $message ) );
@@ -41,6 +45,7 @@ class Go3D_Bug_Report {
         $ok = $wpdb->insert( $wpdb->prefix . 'go3d_bug_reports', [
             'user_id'    => $user_id ?: null,
             'username'   => $username,
+            'type'       => $type,
             'message'    => $message,
             'context'    => sanitize_text_field( substr( $context, 0, 255 ) ),
             'user_agent' => sanitize_text_field( substr( (string) ( $_SERVER['HTTP_USER_AGENT'] ?? '' ), 0, 255 ) ),

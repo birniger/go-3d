@@ -101,23 +101,31 @@ export function confirmModal(message: string, opts: ConfirmOptions = {}): Promis
 export interface PromptOptions extends ConfirmOptions {
   placeholder?: string;
   maxLength?:   number;
+  /** When provided, render a category selector above the text field. */
+  categories?:  { value: string; label: string }[];
+}
+
+export interface PromptResult {
+  text:     string;
+  category: string;   // '' when no categories were offered
 }
 
 /**
- * Like confirmModal but with a multi-line text field. Resolves with the entered
- * text on confirm, or null on cancel / backdrop / Escape. Same inline styling so
- * it works in both builds.
+ * Like confirmModal but with a multi-line text field (and an optional category
+ * selector). Resolves with the entered text + category on confirm, or null on
+ * cancel / backdrop / Escape. Same inline styling so it works in both builds.
  */
-export function promptModal(message: string, opts: PromptOptions = {}): Promise<string | null> {
+export function promptModal(message: string, opts: PromptOptions = {}): Promise<PromptResult | null> {
   const {
     title       = 'Report a bug',
     confirm     = 'Send',
     cancel      = 'Cancel',
     placeholder = '',
     maxLength   = 2000,
+    categories,
   } = opts;
 
-  return new Promise<string | null>(resolve => {
+  return new Promise<PromptResult | null>(resolve => {
     const accent = '#00e5ff';
 
     const backdrop = document.createElement('div');
@@ -147,6 +155,38 @@ export function promptModal(message: string, opts: PromptOptions = {}): Promise<
     const p = document.createElement('div');
     p.textContent = message;
     Object.assign(p.style, { marginBottom: '12px', color: '#c4cedb' } as Partial<CSSStyleDeclaration>);
+
+    // Optional category selector (segmented buttons).
+    let selectedCategory = categories?.[0]?.value ?? '';
+    const catRow = document.createElement('div');
+    if (categories && categories.length) {
+      Object.assign(catRow.style, { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' } as Partial<CSSStyleDeclaration>);
+      const catBtns: HTMLButtonElement[] = [];
+      const paint = () => {
+        catBtns.forEach(b => {
+          const on = b.dataset.value === selectedCategory;
+          Object.assign(b.style, {
+            color: on ? '#04070d' : '#9fb0c4',
+            background: on ? accent : 'transparent',
+            border: `1px solid ${on ? accent : 'rgba(120,135,160,0.4)'}`,
+            fontWeight: on ? '600' : '400',
+          } as Partial<CSSStyleDeclaration>);
+        });
+      };
+      for (const c of categories) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = c.label;
+        b.dataset.value = c.value;
+        Object.assign(b.style, {
+          padding: '6px 12px', cursor: 'pointer', borderRadius: '8px', font: 'inherit', transition: 'all .12s ease',
+        } as Partial<CSSStyleDeclaration>);
+        b.addEventListener('click', () => { selectedCategory = c.value; paint(); });
+        catBtns.push(b);
+        catRow.appendChild(b);
+      }
+      paint();
+    }
 
     const ta = document.createElement('textarea');
     ta.placeholder = placeholder;
@@ -179,14 +219,14 @@ export function promptModal(message: string, opts: PromptOptions = {}): Promise<
     const cancelBtn  = mkBtn(cancel, false);
     const confirmBtn = mkBtn(confirm, true);
 
-    const cleanup = (result: string | null) => {
+    const cleanup = (result: PromptResult | null) => {
       document.removeEventListener('keydown', onKey);
       backdrop.remove();
       resolve(result);
     };
     const submit = () => {
       const v = ta.value.trim();
-      cleanup(v ? v : null);
+      cleanup(v ? { text: v, category: selectedCategory } : null);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') cleanup(null);
@@ -200,7 +240,9 @@ export function promptModal(message: string, opts: PromptOptions = {}): Promise<
     document.addEventListener('keydown', onKey);
 
     row.append(cancelBtn, confirmBtn);
-    box.append(h, p, ta, row);
+    box.append(h, p);
+    if (categories && categories.length) box.append(catRow);
+    box.append(ta, row);
     backdrop.appendChild(box);
     document.body.appendChild(backdrop);
     ta.focus();

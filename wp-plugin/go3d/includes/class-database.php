@@ -3,7 +3,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 class Go3D_Database {
 
-    const DB_VERSION = '1.5';
+    const DB_VERSION = '1.6';
 
     /**
      * Run install() (dbDelta) whenever the stored schema version is behind the
@@ -163,6 +163,7 @@ class Go3D_Database {
             id         BIGINT(20)   NOT NULL AUTO_INCREMENT,
             user_id    BIGINT(20)            DEFAULT NULL,
             username   VARCHAR(60)           DEFAULT NULL,
+            type       VARCHAR(20)  NOT NULL DEFAULT 'bug',
             message    TEXT         NOT NULL,
             context    VARCHAR(255)          DEFAULT NULL,
             user_agent VARCHAR(255)          DEFAULT NULL,
