@@ -106,7 +106,7 @@ class Go3D_Notifications {
             'user_id' => $user_id,
             'game_id' => $game_id,
             'type'    => $type,
-            'sent_at' => current_time( 'mysql' ),
+            'sent_at' => current_time( 'mysql', true ),
         ] );
     }
 }

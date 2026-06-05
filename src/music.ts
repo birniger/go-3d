@@ -31,6 +31,9 @@ export class MusicSystem {
 
   // Look-ahead scheduler state.
   private schedulerId: number | null = null;
+  /** Pending graph-teardown timeout from stop(), cleared if start() re-enters
+   *  within the fade window so it can't tear down the freshly-started graph. */
+  private teardownId: number | null = null;
   private nextStepTime = 0;
   private step = 0;
   private readonly bpm = 82;
@@ -60,6 +63,9 @@ export class MusicSystem {
 
   private start(): void {
     if (this.running) return;
+    // Cancel any pending teardown from a recent stop() so it can't stop the
+    // graph we're about to build.
+    if (this.teardownId !== null) { clearTimeout(this.teardownId); this.teardownId = null; }
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return;
     if (!this.ctx) this.ctx = new Ctor();
@@ -136,7 +142,8 @@ export class MusicSystem {
     }
     // Tear the graph down after the fade so we don't leak oscillators.
     const pad = this.pad, lfo = this.lfo;
-    window.setTimeout(() => {
+    this.teardownId = window.setTimeout(() => {
+      this.teardownId = null;
       try { pad.forEach(v => v.osc.stop()); lfo?.stop(); } catch { /* already stopped */ }
       master?.disconnect();
     }, 900);

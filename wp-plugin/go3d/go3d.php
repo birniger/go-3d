@@ -3,7 +3,7 @@
  * Plugin Name:  3D Go
  * Plugin URI:   https://github.com/birniger/go-3d
  * Description:  Multiplayer 3D Go with user accounts, ELO ratings, and real-time play via Pusher. Includes a local hot-seat mode for two players at one screen.
- * Version:      1.2.7
+ * Version:      1.2.8
  * Author:       birniger
  * License:      MIT
  * Text Domain:  go3d
@@ -11,7 +11,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'GO3D_VERSION',    '1.2.7' );
+define( 'GO3D_VERSION',    '1.2.8' );
 define( 'GO3D_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'GO3D_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -114,7 +114,8 @@ add_action( 'template_redirect', function () {
         $secret = get_option( 'go3d_cron_secret', '' );
         // Refuse to run unless a secret is configured — an unprotected
         // endpoint would let anyone trigger cron work. Compare in constant time.
-        if ( ! is_string( $secret ) || $secret === '' || ! hash_equals( $secret, (string) ( $_GET['secret'] ?? '' ) ) ) {
+        $provided = isset( $_GET['secret'] ) ? sanitize_text_field( wp_unslash( $_GET['secret'] ) ) : '';
+        if ( ! is_string( $secret ) || $secret === '' || ! hash_equals( $secret, $provided ) ) {
             status_header( 403 );
             exit( 'Forbidden' );
         }

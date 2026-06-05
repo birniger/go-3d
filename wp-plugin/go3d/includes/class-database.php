@@ -3,7 +3,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 class Go3D_Database {
 
-    const DB_VERSION = '1.3';
+    const DB_VERSION = '1.4';
 
     /**
      * Run install() (dbDelta) whenever the stored schema version is behind the
@@ -48,7 +48,8 @@ class Go3D_Database {
             UNIQUE KEY uq_username (username),
             UNIQUE KEY uq_email    (email),
             KEY idx_verification_token (verification_token),
-            KEY idx_reset_token        (reset_token)
+            KEY idx_reset_token        (reset_token),
+            KEY idx_leaderboard        (email_verified, elo, games_played)
         ) $charset;" );
 
         // ── Games ────────────────────────────────────────────────────────────
@@ -87,7 +88,9 @@ class Go3D_Database {
             KEY idx_player1   (player1_id),
             KEY idx_player2   (player2_id),
             KEY idx_status    (status),
-            KEY idx_last_move (last_move_at)
+            KEY idx_last_move (last_move_at),
+            KEY idx_p1_list   (player1_id, status, last_move_at),
+            KEY idx_p2_list   (player2_id, status, last_move_at)
         ) $charset;" );
 
         // ── Moves ────────────────────────────────────────────────────────────

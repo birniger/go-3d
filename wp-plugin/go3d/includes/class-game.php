@@ -506,7 +506,7 @@ class Go3D_Game {
             return [ 'ok' => false, 'error' => $result['reason'], 'code' => 422 ];
         }
 
-        $move_number = self::next_move_number( (int)$game['id'] );
+        $move_number = self::next_move_number( (int)$game['id'], $moves );
         $history[]   = $result['hash'];
 
         // UNIQUE(game_id, move_number) guards against a concurrent double-submit:
@@ -579,7 +579,7 @@ class Go3D_Game {
             return [ 'ok' => false, 'error' => $result['reason'], 'code' => 422 ];
         }
 
-        $move_number = self::next_move_number( (int)$game['id'] );
+        $move_number = self::next_move_number( (int)$game['id'], $moves );
         $history[]   = $result['hash'];
 
         $inserted = $wpdb->insert( $mt, [
@@ -1134,7 +1134,16 @@ class Go3D_Game {
         ];
     }
 
-    private static function next_move_number( int $game_id ): int {
+    /**
+     * Next sequential move number. Pass the already-loaded move list (ordered
+     * by move_number ASC) to avoid a redundant MAX() query; the caller's snapshot
+     * is authoritative because the UNIQUE(game_id, move_number) index is what
+     * actually guards against a concurrent double-submit.
+     */
+    private static function next_move_number( int $game_id, ?array $moves = null ): int {
+        if ( is_array( $moves ) ) {
+            return $moves ? (int) end( $moves )['move_number'] + 1 : 1;
+        }
         global $wpdb;
         $max = (int) $wpdb->get_var( $wpdb->prepare(
             "SELECT COALESCE(MAX(move_number), 0) FROM {$wpdb->prefix}go3d_moves WHERE game_id = %d",

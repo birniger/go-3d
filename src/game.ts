@@ -1,6 +1,12 @@
 export type Player = 1 | 2;
 export type Cell = 0 | Player;
 
+/** The six axis-aligned neighbour offsets. Module-level so the hot capture /
+ *  territory flood-fills don't reallocate this array on every neighbours() call. */
+const NEIGHBOR_DIRS: ReadonlyArray<readonly [number, number, number]> = [
+  [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+];
+
 export interface TerritoryResult {
   black:       number;
   white:       number;
@@ -42,13 +48,13 @@ export class Go3D {
   }
 
   neighbors(x: number, y: number, z: number): [number, number, number][] {
-    return ([ [1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1] ] as [number,number,number][])
-      .map(([dx, dy, dz]) => [x+dx, y+dy, z+dz] as [number,number,number])
-      .filter(([nx,ny,nz]) =>
-        nx >= 0 && nx < this.size &&
-        ny >= 0 && ny < this.size &&
-        nz >= 0 && nz < this.size
-      );
+    const s = this.size;
+    const out: [number, number, number][] = [];
+    for (const [dx, dy, dz] of NEIGHBOR_DIRS) {
+      const nx = x + dx, ny = y + dy, nz = z + dz;
+      if (nx >= 0 && nx < s && ny >= 0 && ny < s && nz >= 0 && nz < s) out.push([nx, ny, nz]);
+    }
+    return out;
   }
 
   private getGroup(x: number, y: number, z: number): [number, number, number][] {

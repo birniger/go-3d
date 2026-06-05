@@ -179,6 +179,15 @@ export class Renderer {
   private _camDir = new THREE.Vector3();
   private _tmpV  = new THREE.Vector3();
   private _tmpV2 = new THREE.Vector3();
+  // Reusable scratch objects for per-frame work, so the animate loop doesn't
+  // allocate (and churn the GC) every frame.
+  private _labelV  = new THREE.Vector3();
+  private _pulseMat = new THREE.Matrix4();
+  private _pulseW  = new THREE.Vector3();
+  // Viewport size cached on resize, to avoid layout-reads (innerWidth/Height)
+  // in the per-frame label/cursor projection paths.
+  private _vw = window.innerWidth;
+  private _vh = window.innerHeight;
   private ringPalette = [0x00e5ff, 0xff0077, 0x1affa0];
 
   // Line meshes whose vertices are faded per-frame against the view-aligned
@@ -242,6 +251,7 @@ export class Renderer {
   private _hoshiDirty  = true;
   private _onResize = () => {
     const w = window.innerWidth, h = window.innerHeight;
+    this._vw = w; this._vh = h;
     this.camera.aspect = w/h; this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h); this.composer.setSize(w, h);
   };
@@ -465,8 +475,8 @@ export class Renderer {
   }
 
   private _updateAxisLabels() {
-    const w = window.innerWidth, h = window.innerHeight;
-    const v = new THREE.Vector3();
+    const w = this._vw, h = this._vh;
+    const v = this._labelV;
     for (const { el, wx, wy, wz } of this.axisLabels) {
       v.set(wx, wy, wz).project(this.camera);
       if (v.z > 1) { el.style.display = 'none'; continue; }
@@ -850,7 +860,7 @@ export class Renderer {
         const u = this._tmpV, v = this._tmpV2;
         this.randomBasis(u, v);
         // Orient the ring's local plane to (u,v).
-        const m = new THREE.Matrix4().makeBasis(u, v, new THREE.Vector3().crossVectors(u, v));
+        const m = this._pulseMat.makeBasis(u, v, this._pulseW.crossVectors(u, v));
         p.mesh.quaternion.setFromRotationMatrix(m);
         const [pr, pg, pb] = this.hexRGB(this.ringPalette[(Math.random()*3)|0]);
         p.base[0] = pr; p.base[1] = pg; p.base[2] = pb;
@@ -1248,20 +1258,19 @@ export class Renderer {
   }
 
   showTerritory(map: TerritoryResult['map']) {
-    const s = this.game.size;
+    // Iterate the territory map directly (only empty regions appear in it)
+    // rather than re-scanning the whole n³ board on every call.
     const dummy = new THREE.Object3D();
     let bi = 0, wi = 0;
-    for (let x = 0; x < s; x++)
-      for (let y = 0; y < s; y++)
-        for (let z = 0; z < s; z++) {
-          if (this.game.board[x][y][z] !== 0) continue;
-          const owner = map[`${x},${y},${z}`];
-          if (!owner) continue;
-          dummy.position.set(this.coord(x), this.coord(y), this.coord(z));
-          dummy.updateMatrix();
-          if (owner === 1) this.blackTerritory.setMatrixAt(bi++, dummy.matrix);
-          else             this.whiteTerritory.setMatrixAt(wi++, dummy.matrix);
-        }
+    for (const key in map) {
+      const owner = map[key];
+      if (!owner) continue; // neutral (0) regions are recorded but not drawn
+      const [x, y, z] = key.split(',');
+      dummy.position.set(this.coord(+x), this.coord(+y), this.coord(+z));
+      dummy.updateMatrix();
+      if (owner === 1) this.blackTerritory.setMatrixAt(bi++, dummy.matrix);
+      else             this.whiteTerritory.setMatrixAt(wi++, dummy.matrix);
+    }
     this.blackTerritory.count = bi; this.blackTerritory.instanceMatrix.needsUpdate = true;
     this.whiteTerritory.count = wi; this.whiteTerritory.instanceMatrix.needsUpdate = true;
   }
@@ -1658,7 +1667,7 @@ export class Renderer {
 
       // Coord display above cursor stone
       const gv = new THREE.Vector3(cx, cy + STONE_R * 3, cz).project(this.camera);
-      const sw = window.innerWidth, sh = window.innerHeight;
+      const sw = this._vw, sh = this._vh;
       if (gv.z < 1) {
         this.layerGlyph.style.display = 'block';
         this.layerGlyph.style.left = ((gv.x * 0.5 + 0.5) * sw) + 'px';
@@ -1708,7 +1717,7 @@ export class Renderer {
         ? new THREE.Vector3(0, pos, -hi)
         : new THREE.Vector3(0, hi, pos);
       const gv = glyphPt.project(this.camera);
-      const sw = window.innerWidth, sh = window.innerHeight;
+      const sw = this._vw, sh = this._vh;
       if (gv.z < 1) {
         const color = this.sliceAxis === 'y' ? '#ff0077' : this.sliceAxis === 'z' ? '#00ffaa' : '#00e5ff';
         const label = this.sliceAxis === 'x'
