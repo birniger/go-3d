@@ -262,7 +262,7 @@ export class Lobby {
         showToast('Game created! Waiting for an opponent…', 'info');
         void this.loadOpenGames();
         void this.loadActiveGames();
-        this.showOpenGameBar(res.game_id, boardLabel({
+        this.showOpenGameBar(res.game_id, boardLabelText({
           id: res.game_id, board_size: s.board_size, mode: s.mode,
           scoring_mode: s.scoring_mode, komi: s.komi, time_control: s.time_control,
         } as GameSummary));
@@ -870,6 +870,14 @@ function boardLabel(g: GameSummary): string {
   // Sphere board_size is the geodesic frequency f; point count is 10·f² + 2.
   if (mode === 'sphere') return `Sphere ${10 * g.board_size * g.board_size + 2} <span class="go3d-chip">sphere</span>`;
   if (mode === 'stack')  return `${g.board_size}³ <span class="go3d-chip">stack</span>`;
+  return `${g.board_size}³`;
+}
+
+/** Plain-text variant for status bars/toasts where HTML chips would leak visibly. */
+function boardLabelText(g: GameSummary): string {
+  const mode = g.mode ?? 'cube';
+  if (mode === 'sphere') return `Sphere ${10 * g.board_size * g.board_size + 2} sphere`;
+  if (mode === 'stack') return `${g.board_size}³ stack`;
   return `${g.board_size}³`;
 }
 
