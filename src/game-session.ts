@@ -804,7 +804,11 @@ export class GameSession {
     if (ind) ind.textContent = waiting ? 'Waiting for opponent…' : (myTurn ? 'Your move' : "Opponent's move");
 
     const overlay = document.getElementById('go3d-waiting-overlay');
-    if (overlay) overlay.style.display = (!waiting && !myTurn) ? '' : (waiting ? '' : 'none');
+    // The "Waiting for opponent…" cover is only for the pre-join state (no
+    // opponent yet). During an active game it must stay hidden even when it's
+    // the opponent's turn — otherwise it blocks the board and shows misleading
+    // text. Whose move it is is already conveyed by the turn indicator.
+    if (overlay) overlay.style.display = waiting ? '' : 'none';
 
     const pass   = document.getElementById('go3d-pass-btn')   as HTMLButtonElement | null;
     const resign = document.getElementById('go3d-resign-btn') as HTMLButtonElement | null;
@@ -1170,7 +1174,11 @@ export class SphereGameSession {
     const ind = document.getElementById('go3d-turn-indicator');
     if (ind) ind.textContent = waiting ? 'Waiting for opponent…' : (myTurn ? 'Your move' : "Opponent's move");
     const overlay = document.getElementById('go3d-waiting-overlay');
-    if (overlay) overlay.style.display = (!waiting && !myTurn) ? '' : (waiting ? '' : 'none');
+    // The "Waiting for opponent…" cover is only for the pre-join state (no
+    // opponent yet). During an active game it must stay hidden even when it's
+    // the opponent's turn — otherwise it blocks the board and shows misleading
+    // text. Whose move it is is already conveyed by the turn indicator.
+    if (overlay) overlay.style.display = waiting ? '' : 'none';
     const pass   = document.getElementById('go3d-pass-btn')   as HTMLButtonElement | null;
     const resign = document.getElementById('go3d-resign-btn') as HTMLButtonElement | null;
     if (pass)   pass.disabled   = !myTurn || waiting;
