@@ -248,6 +248,7 @@ export class Renderer {
   // Hoshi star points
   private hoshiInst:  THREE.InstancedMesh | null = null;
   private hoshiCoords: { x: number; y: number; z: number }[] = [];
+  private hoshiIdx:    number[] = []; // the per-axis star indices (for stack-mode 2D pattern)
 
   private pointerDownAt = new THREE.Vector2();
   private pointerMoved  = false;
@@ -429,6 +430,7 @@ export class Renderer {
 
     // Hoshi (star points) — white material, per-instance colour controls brightness
     const hi_arr = hoshiIndices(s);
+    this.hoshiIdx = hi_arr;
     this.hoshiCoords = [];
     if (hi_arr.length > 0) {
       for (const ix of hi_arr) for (const iy of hi_arr) for (const iz of hi_arr)
@@ -1238,12 +1240,38 @@ export class Renderer {
     const col = new THREE.Color();
     const hoshiDefault = new THREE.Color(0xffaa33);
     const dummy = new THREE.Object3D();
-    for (let i = 0; i < this.hoshiCoords.length; i++) {
+    const hc = this.hoshiCoords.length;
+
+    // Stack mode (no slice): the active build layer is a 2D board, so draw the
+    // 2D star-point pattern (x,z ∈ star indices) AT that layer. The 3D hoshi set
+    // would require y to also be a star index, leaving most layers — including
+    // the starting layer 0 — with no star points at all.
+    if (this.stackLayer !== null && this.sliceAxis === 'none') {
+      col.setHex(0xffcc55);
+      let i = 0;
+      for (const ix of this.hoshiIdx) {
+        for (const iz of this.hoshiIdx) {
+          dummy.position.set(this.coord(ix), this.coord(this.stackLayer), this.coord(iz));
+          dummy.scale.setScalar(1);
+          dummy.updateMatrix();
+          this.hoshiInst.setMatrixAt(i, dummy.matrix);
+          this.hoshiInst.setColorAt(i, col);
+          i++;
+        }
+      }
+      // Collapse any unused instances (the 3D set has more points than the 2D one).
+      dummy.scale.setScalar(0); dummy.updateMatrix();
+      for (; i < hc; i++) this.hoshiInst.setMatrixAt(i, dummy.matrix);
+      this.hoshiInst.instanceMatrix.needsUpdate = true;
+      if (this.hoshiInst.instanceColor) this.hoshiInst.instanceColor.needsUpdate = true;
+      return;
+    }
+
+    // Cube mode / slice mode: the full 3D star-point lattice.
+    for (let i = 0; i < hc; i++) {
       const { x, y, z } = this.hoshiCoords[i];
-      const hiddenAbove = this.sliceAxis === 'none' &&
-                          this.stackLayer !== null && y > this.stackLayer;
       dummy.position.set(this.coord(x), this.coord(y), this.coord(z));
-      dummy.scale.setScalar(hiddenAbove ? 0 : 1);
+      dummy.scale.setScalar(1);
       dummy.updateMatrix();
       this.hoshiInst.setMatrixAt(i, dummy.matrix);
 
@@ -1252,10 +1280,6 @@ export class Renderer {
                         (this.sliceAxis === 'y' && y === this.sliceIndex) ||
                         (this.sliceAxis === 'z' && z === this.sliceIndex);
         if (onSlice) col.setHex(0xffcc55); else col.setScalar(0.02);
-      } else if (this.stackLayer !== null) {
-        if (y === this.stackLayer)      col.setHex(0xffcc55);
-        else if (y < this.stackLayer)   col.copy(hoshiDefault).multiplyScalar(0.22);
-        else                            col.setScalar(0);
       } else {
         col.copy(hoshiDefault);
       }
