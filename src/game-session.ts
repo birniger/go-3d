@@ -567,8 +567,13 @@ export class GameSession {
     if (!this.cursorMode) {
       this.cursorMode = true;
       const c = Math.floor(this.game.size / 2);
-      const hover = this.renderer.getLastHover();
-      const pos = hover ?? { x: c, y: c, z: c };
+      // Seed the cursor where the player is looking: the last mouse-hovered
+      // point on desktop, else (touch — no hover) the placeable point nearest
+      // the centre of the current view, so zooming/panning in keeps the cursor
+      // on-screen. Board centre is only the last-resort fallback.
+      const pos = this.renderer.getLastHover()
+        ?? this.renderer.nearestToViewCenter()
+        ?? { x: c, y: c, z: c };
       this.renderer.setCursorPos(pos.x, pos.y, pos.z);
       this.renderer.setCursorActive(true);
     }

@@ -1365,6 +1365,36 @@ export class Renderer {
 
   getLastHover() { return this.lastHover ? { ...this.lastHover } : null; }
 
+  /**
+   * The empty, currently-placeable point whose projection is closest to the
+   * centre of the screen (respecting an active slice or stack layer). Used to
+   * seed the precision cursor on touch — where there's no hover — so it lands on
+   * whatever you've zoomed/panned to, rather than a board centre that may be
+   * off-screen. Returns null if nothing placeable projects in front of the camera.
+   */
+  nearestToViewCenter(): { x: number; y: number; z: number } | null {
+    const s = this.game.size;
+    const v = new THREE.Vector3();
+    let best: { x: number; y: number; z: number } | null = null;
+    let bestD = Infinity;
+    for (let x = 0; x < s; x++) {
+      if (this.sliceAxis === 'x' && x !== this.sliceIndex) continue;
+      for (let y = 0; y < s; y++) {
+        if (this.sliceAxis === 'y' && y !== this.sliceIndex) continue;
+        if (this.stackLayer !== null && y !== this.stackLayer) continue;
+        for (let z = 0; z < s; z++) {
+          if (this.sliceAxis === 'z' && z !== this.sliceIndex) continue;
+          if (this.game.board[x][y][z] !== 0) continue; // empty points only
+          v.set(this.coord(x), this.coord(y), this.coord(z)).project(this.camera);
+          if (v.z <= -1 || v.z >= 1) continue;          // outside the frustum
+          const d = v.x * v.x + v.y * v.y;              // squared dist from screen centre
+          if (d < bestD) { bestD = d; best = { x, y, z }; }
+        }
+      }
+    }
+    return best;
+  }
+
   setSlice(axis: 'none' | 'x' | 'y' | 'z', index: number) {
     this.sliceAxis  = axis;
     this.sliceIndex = index;
