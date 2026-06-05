@@ -445,6 +445,18 @@
   display: flex; gap: 0.75rem;
 }
 
+/* "More" popover — secondary actions grouped with Pass/Resign on mobile. The
+   button is hidden on desktop, where Score/Moves/Help live in the floating
+   view-controls instead. */
+#go3d-mobile-more { display: none; }
+.go3d-more-menu {
+  position: absolute; bottom: calc(100% + 0.5rem); right: 0;
+  flex-direction: column; gap: 0.4rem; padding: 0.5rem;
+  background: rgba(5, 6, 10, 0.92); border: 1px solid var(--go3d-border);
+  border-radius: 12px; z-index: 30; min-width: 7.5rem;
+}
+.go3d-more-menu .go3d-btn-ghost { width: 100%; text-align: center; }
+
 #go3d-waiting-overlay {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   background: rgba(5, 6, 10, 0.85);
@@ -884,6 +896,7 @@
      groups overlapping. */
   #go3d-view-controls { display: none !important; }
   #go3d-undo-btn      { display: none !important; }
+  #go3d-mobile-more   { display: inline-flex; }
 
   /* Stack-mode layer banner: bottom-left, opposite the action buttons. */
   #go3d-layer-banner {

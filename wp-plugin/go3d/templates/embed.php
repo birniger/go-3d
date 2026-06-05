@@ -395,11 +395,21 @@
       <ol id="go3d-history-list"></ol>
     </aside>
 
-    <!-- In-game action buttons (pass / resign) shown over the canvas -->
+    <!-- In-game action buttons (pass / resign) shown over the canvas. On mobile
+         a "More" button reveals the secondary actions (Score/Moves/Undo/Help)
+         in a small popover so they sit with Pass/Resign instead of cluttering
+         the canvas; the precision Controls sheet stays separate. -->
     <div id="go3d-game-actions">
       <button id="go3d-undo-btn"   class="go3d-btn-ghost">Undo</button>
       <button id="go3d-pass-btn"   class="go3d-btn-ghost">Pass</button>
       <button id="go3d-resign-btn" class="go3d-btn-ghost go3d-btn-danger">Resign</button>
+      <button id="go3d-mobile-more" class="go3d-btn-ghost" aria-expanded="false" aria-haspopup="true">More</button>
+      <div id="go3d-mobile-more-menu" class="go3d-more-menu" style="display:none;" role="menu">
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-score" role="menuitem">Score</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-moves" role="menuitem">Moves</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-undo"  role="menuitem">Undo</button>
+        <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-help"  role="menuitem">Help</button>
+      </div>
     </div>
 
     <!-- Replay controls — shown only after a finished game is opened -->
@@ -438,13 +448,6 @@
         <div class="go3d-mobile-row go3d-mobile-sphere-only">
           <span class="go3d-vc-label">Sphere</span>
           <span class="go3d-mobile-note">Rotate, then tap a visible empty node.</span>
-        </div>
-        <div class="go3d-mobile-row">
-          <span class="go3d-vc-label">More</span>
-          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-score">Score</button>
-          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-moves">Moves</button>
-          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-undo">Undo</button>
-          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-help">Help</button>
         </div>
         <div class="go3d-mobile-row">
           <span class="go3d-vc-label">Replay</span>

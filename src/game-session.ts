@@ -748,13 +748,20 @@ export class GameSession {
     bind('go3d-mobile-slice-prev', () => this.stepSlice(-1));
     bind('go3d-mobile-slice-next', () => this.stepSlice(1));
     bind('go3d-mobile-place', () => this.placeCursor());
-    // "More" row — these mirror the desktop floating controls, which are hidden
-    // on mobile to free up the canvas (see go3d.css). They reuse the exact same
-    // handlers so behaviour stays in one place.
-    bind('go3d-mobile-score', () => this.toggleScore());
-    bind('go3d-mobile-moves', toggleHistory);
-    bind('go3d-mobile-undo',  () => void this.doUndo());
-    bind('go3d-mobile-help',  () => openHelpOverlay());
+    // "More" popover — sits with Pass/Resign on mobile and groups the secondary
+    // actions (which on desktop live in the floating view-controls). Handlers
+    // are reused so behaviour stays in one place; each one closes the menu.
+    const moreMenu = document.getElementById('go3d-mobile-more-menu');
+    const moreBtn  = document.getElementById('go3d-mobile-more') as HTMLButtonElement | null;
+    const setMore  = (open: boolean) => {
+      if (moreMenu) moreMenu.style.display = open ? 'flex' : 'none';
+      moreBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    if (moreBtn) moreBtn.onclick = () => setMore(moreMenu?.style.display === 'none');
+    bind('go3d-mobile-score', () => { this.toggleScore(); setMore(false); });
+    bind('go3d-mobile-moves', () => { toggleHistory();    setMore(false); });
+    bind('go3d-mobile-undo',  () => { void this.doUndo(); setMore(false); });
+    bind('go3d-mobile-help',  () => { openHelpOverlay();  setMore(false); });
     document.querySelectorAll<HTMLButtonElement>('[data-go3d-cursor]').forEach(btn => {
       btn.onclick = () => {
         const [dx, dy, dz] = (btn.dataset.go3dCursor ?? '0,0,0').split(',').map(Number);
@@ -1154,15 +1161,22 @@ export class SphereGameSession {
         mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
       };
     }
-    // "More" row — mirror the desktop floating controls (hidden on mobile).
+    // "More" popover — groups the secondary actions with Pass/Resign on mobile.
     const mbind = (id: string, fn: () => void) => {
       const el = document.getElementById(id) as HTMLButtonElement | null;
       if (el) el.onclick = fn;
     };
-    mbind('go3d-mobile-score', () => this.toggleScore());
-    mbind('go3d-mobile-moves', toggleHistory);
-    mbind('go3d-mobile-undo',  () => void this.doUndo());
-    mbind('go3d-mobile-help',  () => openHelpOverlay());
+    const moreMenu = document.getElementById('go3d-mobile-more-menu');
+    const moreBtn  = document.getElementById('go3d-mobile-more') as HTMLButtonElement | null;
+    const setMore  = (open: boolean) => {
+      if (moreMenu) moreMenu.style.display = open ? 'flex' : 'none';
+      moreBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    if (moreBtn) moreBtn.onclick = () => setMore(moreMenu?.style.display === 'none');
+    mbind('go3d-mobile-score', () => { this.toggleScore(); setMore(false); });
+    mbind('go3d-mobile-moves', () => { toggleHistory();    setMore(false); });
+    mbind('go3d-mobile-undo',  () => { void this.doUndo(); setMore(false); });
+    mbind('go3d-mobile-help',  () => { openHelpOverlay();  setMore(false); });
     const mobileStatus = document.getElementById('go3d-mobile-status');
     if (mobileStatus) mobileStatus.textContent = 'Rotate the globe, then tap a visible empty node';
   }
