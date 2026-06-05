@@ -100,6 +100,107 @@
       </tr>
     </table>
 
+    <!-- ── Real-time diagnostics ─────────────────────────────── -->
+    <h2 class="title"><?php esc_html_e( 'Real-time Diagnostics', 'go3d' ); ?></h2>
+    <p><?php esc_html_e( 'Test your Pusher connection end-to-end. The server sends a real API call and reports exactly what it received.', 'go3d' ); ?></p>
+    <p>
+      <button type="button" id="go3d-test-pusher" class="button button-secondary">
+        <?php esc_html_e( 'Test server → Pusher connection', 'go3d' ); ?>
+      </button>
+      <button type="button" id="go3d-test-auth" class="button button-secondary" style="margin-left:6px;">
+        <?php esc_html_e( 'Test auth endpoint', 'go3d' ); ?>
+      </button>
+    </p>
+    <pre id="go3d-debug-log" class="go3d-debug-console" aria-live="polite"><?php esc_html_e( 'Click a test button to see diagnostics here.', 'go3d' ); ?></pre>
+    <style>
+    .go3d-debug-console {
+      background: #0a0c12; color: #cdd6e4; border: 1px solid #1d2433; border-radius: 8px;
+      padding: 14px 16px; max-height: 320px; overflow: auto; font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-all;
+      margin-top: 8px;
+    }
+    .go3d-debug-console:empty { display: none; }
+    </style>
+    <script>
+    (function() {
+      var log = document.getElementById('go3d-debug-log');
+      var apiBase = '<?php echo esc_js( rest_url( Go3D_API::NAMESPACE ) ); ?>';
+      // Shared REST nonce — WP cookie auth requires it, otherwise the request is
+      // treated as anonymous and the admin-only routes return 401/403.
+      var nonce = '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>';
+
+      function ts() {
+        return new Date().toLocaleTimeString('en-CH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      }
+
+      function append(line) {
+        log.textContent = (log.textContent === 'Click a test button to see diagnostics here.' ? '' : log.textContent + '\n') + '[' + ts() + '] ' + line;
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function statusIcon(ok) {
+        return ok ? '\u2705' : '\u274C';
+      }
+
+      document.getElementById('go3d-test-pusher').addEventListener('click', function() {
+        append('--- Testing server \u2192 Pusher API ---');
+        fetch(apiBase + '/pusher/health', { credentials: 'same-origin', headers: { 'X-WP-Nonce': nonce } })
+          .then(function(r) { return r.json().then(function(d) { return { status: r.status, body: d }; }); })
+          .then(function(res) {
+            var b = res.body;
+            if (res.status !== 200 && b.error) {
+              append(statusIcon(false) + ' Endpoint error: ' + b.error);
+              return;
+            }
+            var c = b.credentials;
+            append('Credentials: App ID=' + c.app_id + ', Key=' + c.key + ', Secret=' + c.secret + ', Cluster=' + c.cluster);
+            var h = b.http_test;
+            append('HTTP ' + h.code + ' \u2192 ' + h.message);
+            append('Channel: ' + h.channel);
+            if (h.pusher_response) {
+              append('Raw response: ' + h.pusher_response);
+            }
+            append(statusIcon(h.ok) + ' ' + (h.ok ? 'Pusher is working correctly.' : 'Check your credentials on pusher.com.'));
+          })
+          .catch(function(e) {
+            append(statusIcon(false) + ' Request failed: ' + e.message);
+          });
+      });
+
+      document.getElementById('go3d-test-auth').addEventListener('click', function() {
+        append('--- Testing Pusher auth endpoint ---');
+        fetch(apiBase + '/pusher/auth', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': nonce
+          },
+          body: JSON.stringify({
+            socket_id: 'test-socket-id',
+            channel_name: 'private-game-1'
+          })
+        })
+          .then(function(r) { return r.json().then(function(d) { return { status: r.status, body: d }; }); })
+          .then(function(res) {
+            if (res.status === 401) {
+              append(statusIcon(false) + ' Auth endpoint requires a logged-in user. This is expected when testing from settings \u2014 it means the endpoint is reachable and enforcing authentication.');
+              return;
+            }
+            if (res.status === 404) {
+              append(statusIcon(true) + ' Auth endpoint responded with 404 (game 1 not found). This is expected \u2014 the endpoint is working, it just rejected the synthetic game ID.');
+              return;
+            }
+            append('Status: ' + res.status + ' \u2014 ' + JSON.stringify(res.body));
+            append(statusIcon(res.status >= 200 && res.status < 300) + ' Complete.');
+          })
+          .catch(function(e) {
+            append(statusIcon(false) + ' Request failed: ' + e.message);
+          });
+      });
+    })();
+    </script>
+
     <!-- ── Email ───────────────────────────────────────────────── -->
     <h2 class="title"><?php esc_html_e( 'Email / Notifications', 'go3d' ); ?></h2>
     <table class="form-table" role="presentation">

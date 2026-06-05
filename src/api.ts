@@ -69,6 +69,12 @@ async function request<T>(
   const json = await res.json().catch(() => ({}));
 
   if (!res.ok) {
+    // Expired/invalid token: clear it so AuthState.init() picks up the change
+    // on next navigation and routes the user back to login with a clear error.
+    if (res.status === 401 && getToken()) {
+      clearToken();
+      throw new ApiError(401, 'Session expired. Please log in again.');
+    }
     throw new ApiError(res.status, json.error ?? `HTTP ${res.status}`);
   }
   return json as T;
@@ -130,6 +136,14 @@ export interface GameSummary {
   finished_at:     string | null;
   player1_name?:   string | null;
   player2_name?:   string | null;
+}
+
+/** Time control settings. */
+export interface TimeSettings {
+  main_time_s: number;
+  byoyomi_periods?: number;
+  byoyomi_time_s?: number;
+  fischer_increment_s?: number;
 }
 
 /** Geodesic globe geometry for sphere games (server-generated, see Go3D_Geodesic). */

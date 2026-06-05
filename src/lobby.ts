@@ -31,6 +31,11 @@ export class Lobby {
   /** A game id from a `?go3d_game=` deep link (e.g. a "your turn" email), routed
    *  into on the first lobby entry after auth, then consumed. */
   private pendingGameId: number | null = null;
+  /** When the user creates an open game, the bar polls for a join instead of
+   *  immediately entering the game screen. */
+  private openGameId: number | null = null;
+  private openGamePollInterval: ReturnType<typeof setInterval> | null = null;
+  private challengePollInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(onScreenChange: ScreenChangeCallback) {
     this.onScreenChange = onScreenChange;
@@ -239,6 +244,8 @@ export class Lobby {
     // Lobby new-game form: server "Create open game" + post-login "Play locally".
     const readLobby = bindGameForm(LOBBY_FORM_IDS);
     this.readLobbySettings = readLobby;
+    // Lobby new-game form: creates an open game and shows a status bar instead
+    // of immediately entering the game screen. The bar polls for a join.
     document.getElementById('go3d-new-game-form')!.addEventListener('submit', async e => {
       e.preventDefault();
       const s        = readLobby();
@@ -255,7 +262,10 @@ export class Lobby {
         showToast('Game created! Waiting for an opponent…', 'info');
         void this.loadOpenGames();
         void this.loadActiveGames();
-        this.onScreenChange('game', res.game_id);
+        this.showOpenGameBar(res.game_id, boardLabel({
+          id: res.game_id, board_size: s.board_size, mode: s.mode,
+          scoring_mode: s.scoring_mode, komi: s.komi, time_control: s.time_control,
+        } as GameSummary));
       } catch (err) {
         showToast(apiErrorMessage(err), 'error');
       }
@@ -301,7 +311,14 @@ export class Lobby {
   // ── Show screens ──────────────────────────────────────────────────────────
 
   showAuth(): void {
+    this.cleanup();
     setScreen('auth');
+  }
+
+  /** Stop all background intervals. Called by app.ts when leaving the lobby. */
+  cleanup(): void {
+    this.closeOpenGameBar();
+    this.stopChallengePolling();
   }
 
   async showLobby(): Promise<void> {
@@ -325,6 +342,7 @@ export class Lobby {
     document.getElementById('go3d-lobby-elo')!.textContent      = String(user.elo);
 
     setScreen('lobby');
+    this.startChallengePolling();
     await Promise.all([this.loadOpenGames(), this.loadActiveGames(), this.loadLeaderboard(), this.loadSocial()]);
   }
 
@@ -537,6 +555,100 @@ export class Lobby {
       requestsEl.innerHTML = '';
       challengesEl.innerHTML = '';
     }
+  }
+
+  // ── Open-game status bar ──────────────────────────────────────────────────
+
+  /** Show the floating bar in the lobby while waiting for an opponent. */
+  private showOpenGameBar(gameId: number, description: string): void {
+    this.closeOpenGameBar();
+    this.openGameId = gameId;
+    const bar = document.getElementById('go3d-open-game-bar')!;
+    const label = document.getElementById('go3d-open-game-bar-label')!;
+    const enter = document.getElementById('go3d-open-game-enter') as HTMLButtonElement | null;
+    const cancel = document.getElementById('go3d-open-game-cancel') as HTMLButtonElement | null;
+
+    label.textContent = `🟡 Waiting for opponent — ${description}`;
+    if (enter) enter.style.display = 'none';
+    if (cancel) cancel.onclick = async () => {
+      if (!(await confirmModal('Cancel this open game? It will be removed from the lobby.', { title: 'Cancel game', confirm: 'Cancel game', cancel: 'Keep it', danger: true }))) return;
+      try {
+        await Games.cancel(gameId);
+        showToast('Game cancelled.', 'success');
+        void this.loadOpenGames();
+      } catch (err) { showToast(apiErrorMessage(err), 'error'); }
+      this.closeOpenGameBar();
+    };
+    bar.style.display = '';
+
+    // Poll every 3 s until someone joins.
+    this.openGamePollInterval = setInterval(() => void this.pollOpenGame(gameId), 3000);
+  }
+
+  private async pollOpenGame(gameId: number): Promise<void> {
+    try {
+      const state = await Games.get(gameId);
+      if (state.status === 'active' && state.player2_id) {
+        const oppName = state.player2_name ?? `Player ${state.player2_id}`;
+        const oppElo = state.player2_elo ? ` (${state.player2_elo})` : '';
+        const label = document.getElementById('go3d-open-game-bar-label');
+        if (label) label.textContent = `🟢 ${oppName}${oppElo} joined!`;
+        const enter = document.getElementById('go3d-open-game-enter') as HTMLButtonElement | null;
+        if (enter) {
+          enter.style.display = '';
+          enter.onclick = () => { this.closeOpenGameBar(); this.onScreenChange('game', gameId); };
+        }
+        // Auto-navigate after 2 s.
+        const id = this.openGameId;
+        setTimeout(() => { if (this.openGameId === id) { this.closeOpenGameBar(); this.onScreenChange('game', id); } }, 2000);
+        this.stopOpenGamePoll();
+      }
+    } catch { /* retry next poll */ }
+  }
+
+  private closeOpenGameBar(): void {
+    this.stopOpenGamePoll();
+    this.openGameId = null;
+    const bar = document.getElementById('go3d-open-game-bar');
+    if (bar) bar.style.display = 'none';
+  }
+
+  private stopOpenGamePoll(): void {
+    if (this.openGamePollInterval !== null) {
+      clearInterval(this.openGamePollInterval);
+      this.openGamePollInterval = null;
+    }
+  }
+
+  // ── Challenge auto-polling ────────────────────────────────────────────────
+
+  /** Start polling challenges every 5 s so the challenger sees when a challenge
+   *  is accepted. Rescheduled every time showLobby() runs. */
+  private startChallengePolling(): void {
+    this.stopChallengePolling();
+    this.challengePollInterval = setInterval(() => void this.checkChallengeUpdates(), 5000);
+  }
+
+  private stopChallengePolling(): void {
+    if (this.challengePollInterval !== null) {
+      clearInterval(this.challengePollInterval);
+      this.challengePollInterval = null;
+    }
+  }
+
+  private async checkChallengeUpdates(): Promise<void> {
+    // Only poll while on the lobby screen.
+    if (document.getElementById('go3d-lobby')?.style.display === 'none') return;
+    try {
+      const challenges = await Games.challenges();
+      const accepted = challenges.outgoing.find(c => c.status === 'accepted' && c.game_id);
+      if (accepted && accepted.game_id) {
+        const name = accepted.challenged_name ?? 'Opponent';
+        showToast(`${name} accepted your challenge!`, 'success');
+        this.stopChallengePolling();
+        this.onScreenChange('game', accepted.game_id);
+      }
+    } catch { /* retry next poll */ }
   }
 
   private async searchUsers(): Promise<void> {

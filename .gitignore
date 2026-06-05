@@ -15,7 +15,8 @@ dist/
 .AppleDouble
 .LSOverride
 
-# Editor directories and files
+# Editor / agent directories and files
+.claude/
 .idea/
 .vscode/
 *.suo

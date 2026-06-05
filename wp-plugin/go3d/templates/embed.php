@@ -229,6 +229,15 @@
         <p class="go3d-empty-msg" id="go3d-no-open-games" style="display:none;">No open games. Create one above!</p>
       </section>
 
+      <!-- Open game status bar (visible when you have a game waiting for an opponent) -->
+      <div id="go3d-open-game-bar" class="go3d-open-game-bar" style="display:none;" role="status" aria-live="polite">
+        <span class="go3d-open-game-bar-label" id="go3d-open-game-bar-label"></span>
+        <span class="go3d-open-game-bar-actions">
+          <button id="go3d-open-game-enter" class="go3d-btn-primary go3d-btn-sm" style="display:none;">Enter game</button>
+          <button id="go3d-open-game-cancel" class="go3d-btn-ghost go3d-btn-sm go3d-btn-danger">Cancel</button>
+        </span>
+      </div>
+
       <!-- Your active games -->
       <section class="go3d-panel">
         <h3>Your active games</h3>

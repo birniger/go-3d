@@ -914,6 +914,10 @@ class Go3D_Game {
 
         $u = $wpdb->prefix . 'go3d_users';
 
+        // Defence-in-depth: validate the status whitelist inside the method
+        // so a caller bypassing the API handler can't inject SQL.
+        $allowed = [ 'open', 'active', 'finished' ];
+        if ( ! in_array( $status, $allowed, true ) ) $status = 'active';
         $status_sql = $wpdb->prepare( 'g.status = %s', $status );
         $rows = $wpdb->get_results( $wpdb->prepare(
             "SELECT g.id, g.player1_id, g.player2_id, g.board_size, g.mode, g.scoring_mode, g.komi,

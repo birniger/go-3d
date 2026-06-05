@@ -19,6 +19,13 @@ class Go3D_API {
             'callback'            => [ __CLASS__, 'pusher_auth' ],
             'permission_callback' => '__return_true',
         ] );
+
+        // Pusher health check (admin diagnostics)
+        register_rest_route( self::NAMESPACE, '/pusher/health', [
+            'methods'             => 'GET',
+            'callback'            => [ __CLASS__, 'pusher_health' ],
+            'permission_callback' => [ __CLASS__, 'is_admin' ],
+        ] );
     }
 
     // ── Pusher channel auth ───────────────────────────────────────────────────
@@ -59,6 +66,28 @@ class Go3D_API {
 
     public static function error( string $message, int $code = 400 ): WP_REST_Response {
         return new WP_REST_Response( [ 'error' => $message ], $code );
+    }
+
+    // ── Pusher health check ──────────────────────────────────────────────────
+
+    public static function is_admin(): bool {
+        return current_user_can( 'manage_options' );
+    }
+
+    public static function pusher_health( WP_REST_Request $req ): WP_REST_Response {
+        unset( $req );
+
+        $report = [
+            'credentials' => [
+                'app_id'  => get_option( 'go3d_pusher_app_id', '' ) ? 'set' : 'missing',
+                'key'     => get_option( 'go3d_pusher_key', '' ) ? 'set' : 'missing',
+                'secret'  => get_option( 'go3d_pusher_secret', '' ) ? 'set' : 'missing',
+                'cluster' => get_option( 'go3d_pusher_cluster', 'eu' ),
+            ],
+            'http_test' => Go3D_Pusher::health_check(),
+        ];
+
+        return self::ok( $report );
     }
 
     public static function ok( array $data = [], int $code = 200 ): WP_REST_Response {

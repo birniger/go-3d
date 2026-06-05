@@ -221,10 +221,14 @@ class Go3D_API_Games {
             $user_id
         ), ARRAY_A ) ?: [];
 
+        // Outgoing: show pending + recently accepted (so the challenger sees the
+        // "Enter game" link after the challenged player accepts).
         $outgoing = $wpdb->get_results( $wpdb->prepare(
             "SELECT $select, u.username AS challenged_name, u.elo AS challenged_elo
              FROM $c ch JOIN $u u ON u.id = ch.challenged_id
-             WHERE ch.challenger_id = %d AND ch.status = 'pending' AND ch.expires_at > UTC_TIMESTAMP()
+             WHERE ch.challenger_id = %d
+               AND ((ch.status = 'pending' AND ch.expires_at > UTC_TIMESTAMP())
+                 OR (ch.status = 'accepted' AND ch.game_id IS NOT NULL AND ch.created_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 5 MINUTE)))
              ORDER BY ch.created_at DESC LIMIT 50",
             $user_id
         ), ARRAY_A ) ?: [];

@@ -604,6 +604,37 @@
 #go3d-game-screen[data-go3d-mode="sphere"] .go3d-mobile-cube-only { display: none; }
 #go3d-game-screen:not([data-go3d-mode="sphere"]) .go3d-mobile-sphere-only { display: none; }
 
+/* ── Open-game status bar (lobby) ────────────────────────────────────────── */
+.go3d-open-game-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 1rem;
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.08), rgba(25, 245, 160, 0.05));
+  border: 1px solid rgba(0, 229, 255, 0.28);
+  border-radius: 10px;
+  color: var(--go3d-cyan);
+  font-size: 0.9rem;
+  letter-spacing: 0.03em;
+  animation: go3d-bar-in 0.3s ease;
+}
+@keyframes go3d-bar-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.go3d-open-game-bar-label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1;
+}
+.go3d-open-game-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 /* ── Leaderboard ─────────────────────────────────────────────────────────── */
 #go3d-leaderboard-table .go3d-row-me { background: rgba(0, 229, 255, 0.08); }
 .go3d-lb-name { color: var(--go3d-cyan); text-decoration: none; }
@@ -864,7 +895,8 @@
   }
 
   #go3d-game-actions {
-    left: 0.75rem;
+    right: 0.75rem;
+    left: auto;
     bottom: 5.25rem;
     transform: none;
   }

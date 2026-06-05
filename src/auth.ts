@@ -29,7 +29,9 @@ export const AuthState = {
     return () => _listeners.delete(listener);
   },
 
-  /** Try to restore session from localStorage JWT. */
+  /** Try to restore session from localStorage JWT. Only clears the token on
+   *  a definite auth failure (401/403); network errors and server outages leave
+   *  the stored token alone so the user isn't randomly logged out. */
   async init(): Promise<User | null> {
     const token = getToken();
     if (!token) return null;
@@ -37,8 +39,11 @@ export const AuthState = {
       _user = await AuthAPI.me();
       notify();
       return _user;
-    } catch {
-      clearToken();
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        clearToken();
+      }
+      // Network / 5xx errors: keep the token; the next API call will retry.
       return null;
     }
   },

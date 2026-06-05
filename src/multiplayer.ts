@@ -68,6 +68,8 @@ export class MultiplayerController {
   /** Stack mode: last known active layer (used to detect advances when polling). */
   private activeLayer: number;
   private seenUndoRequest: string | null = null;
+  /** Guard against double-firing onPlayerJoined from Pusher + polling. */
+  private playerJoined = false;
 
   constructor(gameState: GameState, private callbacks: MultiplayerCallbacks) {
     this.gameState    = gameState;
@@ -112,6 +114,14 @@ export class MultiplayerController {
       this.callbacks.onError('Realtime sync unavailable; using polling fallback.');
       this.startPolling();
     });
+
+    // While the game is still waiting for an opponent, also poll the server
+    // directly every 2 s — Pusher events can be lost, but the REST endpoint
+    // always reflects the current state. Once player2 joins, the polling
+    // interval drops to the normal 3 s cadence.
+    if (this.gameState.status !== 'active') {
+      this.startJoiningPoll();
+    }
 
     if (this.gameState.time_control !== 'none' && this.gameState.status === 'active') this.startClock();
   }
@@ -202,12 +212,24 @@ export class MultiplayerController {
   }
 
   private handlePlayerJoined(payload: PlayerJoinedPayload): void {
+    if (this.playerJoined) return;
+    this.playerJoined = true;
     const alreadyJoined = this.gameState.status === 'active' && this.gameState.player2_id === payload.player2_id;
     this.gameState.status = 'active';
     this.gameState.player2_id = payload.player2_id;
     this.gameState.player2_name = payload.player2_name ?? this.gameState.player2_name;
     this.gameState.player2_elo = payload.player2_elo ?? this.gameState.player2_elo;
     if (!alreadyJoined) this.callbacks.onPlayerJoined(payload);
+    // Hand off from the 2 s "waiting for opponent" poll to the normal 3 s
+    // cadence. When the join arrives over Pusher (the common case) the joining
+    // poll is still running; if we don't swap it here it spins every 2 s for the
+    // rest of the game and the move-recovery poll never starts. poll() also
+    // calls this method via the fallback path — replacing the interval there is
+    // harmless (clearing the currently-firing interval is safe).
+    if (this.pollInterval !== null) clearInterval(this.pollInterval);
+    this.pollMoveNumber = this.gameState.moves.length;
+    this.pollFailures = 0;
+    this.pollInterval = setInterval(() => void this.poll(), 3000);
     if (this.gameState.time_control !== 'none') this.startClock();
   }
 
@@ -264,6 +286,47 @@ export class MultiplayerController {
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private pollMoveNumber = 0;
   private pollFailures = 0;
+
+  /** Short-interval poll that runs while the game is open — detects when an
+   *  opponent joins even when Pusher events are lost. Once player2 appears, the
+   *  interval drops to the normal 3 s cadence. */
+  private startJoiningPoll(): void {
+    if (this.pollInterval !== null) return;
+    this.pollMoveNumber = 0;
+    this.pollFailures = 0;
+    this.callbacks.onConnectionStatus?.('polling');
+    this.pollInterval = setInterval(() => void this.joiningPoll(), 2000);
+  }
+
+  private async joiningPoll(): Promise<void> {
+    try {
+      const state = await Games.get(this.gameState.id);
+      this.pollFailures = 0;
+      if (state.status === 'active' && state.player2_id) {
+        if (this.playerJoined) return;
+        this.playerJoined = true;
+        this.gameState.status = 'active';
+        this.gameState.player2_id = state.player2_id;
+        this.gameState.player2_name = state.player2_name ?? this.gameState.player2_name;
+        this.gameState.player2_elo = state.player2_elo ?? this.gameState.player2_elo;
+        this.p1Ms = state.p1_time_ms;
+        this.p2Ms = state.p2_time_ms;
+        // Switch to normal polling cadence now that the game is underway.
+        this.pollInterval !== null && clearInterval(this.pollInterval);
+        this.pollInterval = setInterval(() => void this.poll(), 3000);
+        this.pollMoveNumber = state.moves.length;
+        this.callbacks.onPlayerJoined({
+          player2_id:   state.player2_id,
+          player2_name: state.player2_name,
+          player2_elo:  state.player2_elo,
+        });
+        if (state.time_control !== 'none') this.startClock();
+      }
+    } catch {
+      this.pollFailures++;
+      if (this.pollFailures >= 2) this.callbacks.onConnectionStatus?.('reconnecting');
+    }
+  }
 
   private startPolling(): void {
     if (this.pollInterval !== null) return;

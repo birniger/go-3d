@@ -7,6 +7,86 @@ if ( ! defined( 'ABSPATH' ) ) exit;
  */
 class Go3D_Pusher {
 
+    // ── Health check ──────────────────────────────────────────────────────────
+
+    /**
+     * Verify that Pusher credentials work by posting a test event and
+     * checking the HTTP response. Returns structured diagnostics.
+     *
+     * @return array{ok:bool,code:int,message:string,channel:string,event:string,pusher_response:string|null}
+     */
+    public static function health_check(): array {
+        $app_id  = get_option( 'go3d_pusher_app_id',  '' );
+        $key     = get_option( 'go3d_pusher_key',     '' );
+        $secret  = get_option( 'go3d_pusher_secret',  '' );
+        $cluster = get_option( 'go3d_pusher_cluster', 'eu' );
+
+        $missing = [];
+        if ( ! $app_id ) $missing[] = 'App ID';
+        if ( ! $key )    $missing[] = 'Key';
+        if ( ! $secret ) $missing[] = 'Secret';
+        if ( ! empty( $missing ) ) {
+            return [
+                'ok'      => false,
+                'code'    => 0,
+                'message' => 'Missing credentials: ' . implode( ', ', $missing ) . '.',
+                'channel' => '',
+                'event'   => '',
+                'pusher_response' => null,
+            ];
+        }
+
+        $channel = 'private-diagnostics-' . wp_generate_uuid4();
+        $event   = 'health-ping';
+        $body    = wp_json_encode( [
+            'name'    => $event,
+            'channels' => [ $channel ],
+            'data'    => wp_json_encode( [ 'ping' => true, 'time' => time() ] ),
+        ] );
+        $body_md5  = md5( $body );
+        $timestamp = time();
+        $path      = "/apps/$app_id/events";
+        $query_params = http_build_query( [
+            'auth_key'       => $key,
+            'auth_timestamp' => $timestamp,
+            'auth_version'   => '1.0',
+            'body_md5'       => $body_md5,
+        ] );
+        $string_to_sign = implode( "\n", [ 'POST', $path, $query_params ] );
+        $auth_signature = hash_hmac( 'sha256', $string_to_sign, $secret );
+        $url = "https://api-$cluster.pusher.com$path?$query_params&auth_signature=$auth_signature";
+
+        $response = wp_remote_post( $url, [
+            'body'    => $body,
+            'headers' => [ 'Content-Type' => 'application/json' ],
+            'timeout' => 10,
+        ] );
+
+        if ( is_wp_error( $response ) ) {
+            return [
+                'ok'      => false,
+                'code'    => 0,
+                'message' => 'HTTP error: ' . $response->get_error_message(),
+                'channel' => $channel,
+                'event'   => $event,
+                'pusher_response' => null,
+            ];
+        }
+
+        $code = wp_remote_retrieve_response_code( $response );
+        $body_raw = wp_remote_retrieve_body( $response );
+        $ok = $code >= 200 && $code < 300;
+
+        return [
+            'ok'      => $ok,
+            'code'    => $code,
+            'message' => $ok ? 'Pusher API responded successfully.' : 'Pusher API returned HTTP ' . $code . '.',
+            'channel' => $channel,
+            'event'   => $event,
+            'pusher_response' => $body_raw,
+        ];
+    }
+
     // ── Trigger ───────────────────────────────────────────────────────────────
 
     /**
@@ -23,7 +103,10 @@ class Go3D_Pusher {
         $secret  = get_option( 'go3d_pusher_secret',  '' );
         $cluster = get_option( 'go3d_pusher_cluster', 'eu' );
 
-        if ( ! $app_id || ! $key || ! $secret ) return false;
+        if ( ! $app_id || ! $key || ! $secret ) {
+            error_log( "Go3D Pusher: trigger '$event' on '$channel' skipped — missing credentials (app_id=" . ( $app_id ? 'set' : 'missing' ) . ", key=" . ( $key ? 'set' : 'missing' ) . ", secret=" . ( $secret ? 'set' : 'missing' ) . ")" );
+            return false;
+        }
 
         $body         = wp_json_encode( [
             'name'     => $event,

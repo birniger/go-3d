@@ -38,6 +38,9 @@ class App {
   }
 
   private onScreenChange(screen: Screen, data?: unknown): void {
+    // Stop background polling when leaving the lobby.
+    if (screen !== 'lobby') this.lobby.cleanup();
+
     // Entering a game (server or local) keeps no prior session; any other screen
     // change tears one down.
     if (screen !== 'game' && screen !== 'local' && this.session) {
