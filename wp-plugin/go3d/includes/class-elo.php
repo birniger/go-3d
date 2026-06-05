@@ -60,26 +60,29 @@ class Go3D_Elo {
         $delta_a = (int) round( $ka * ( $sa - $ea ) );
         $delta_b = (int) round( $kb * ( $sb - $eb ) );
 
-        $new_ra = max( 100, $ra + $delta_a );
-        $new_rb = max( 100, $rb + $delta_b );
-
-        // Update P1
-        $wpdb->update( $t, [
-            'elo'          => $new_ra,
-            'games_played' => (int)$p1['games_played'] + 1,
-            'wins'         => (int)$p1['wins']   + ( $sa === 1.0 ? 1 : 0 ),
-            'losses'       => (int)$p1['losses'] + ( $sa === 0.0 ? 1 : 0 ),
-            'draws'        => (int)$p1['draws']  + ( $sa === 0.5 ? 1 : 0 ),
-        ], [ 'id' => $p1_id ] );
-
-        // Update P2
-        $wpdb->update( $t, [
-            'elo'          => $new_rb,
-            'games_played' => (int)$p2['games_played'] + 1,
-            'wins'         => (int)$p2['wins']   + ( $sb === 1.0 ? 1 : 0 ),
-            'losses'       => (int)$p2['losses'] + ( $sb === 0.0 ? 1 : 0 ),
-            'draws'        => (int)$p2['draws']  + ( $sb === 0.5 ? 1 : 0 ),
-        ], [ 'id' => $p2_id ] );
+        // Apply the changes as atomic column increments rather than absolute
+        // read-modify-write. If the same player finishes two games at nearly the
+        // same time, absolute writes would clobber each other's counter bump (and
+        // ELO); `col = col + delta` composes correctly under concurrency. ELO
+        // deltas compose additively, which is the standard rating approach.
+        $apply = function ( int $id, int $delta, float $score ) use ( $wpdb, $t ) {
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE $t SET
+                    elo          = GREATEST( 100, elo + %d ),
+                    games_played = games_played + 1,
+                    wins         = wins   + %d,
+                    losses       = losses + %d,
+                    draws        = draws  + %d
+                 WHERE id = %d",
+                $delta,
+                $score === 1.0 ? 1 : 0,
+                $score === 0.0 ? 1 : 0,
+                $score === 0.5 ? 1 : 0,
+                $id
+            ) );
+        };
+        $apply( $p1_id, $delta_a, $sa );
+        $apply( $p2_id, $delta_b, $sb );
 
         return [ $delta_a, $delta_b ];
     }

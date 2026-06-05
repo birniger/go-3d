@@ -19,6 +19,10 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { SoundSystem } from './renderer';
 import { SphereGeometry as GeoData } from './api';
 
+// Touch devices render at lower resolution and a capped frame rate to keep the
+// bloom pipeline from overheating the GPU (see the same constant in renderer.ts).
+const IS_TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+
 const CYAN = 0x00e5ff;
 const PINK = 0xff0077;
 const BG   = 0x020408;
@@ -65,6 +69,17 @@ export class SphereRenderer {
 
   private hoverPhase = 0;
   private _rafId = 0;
+  private _frameInterval = IS_TOUCH ? 1000 / 40 : 0;
+  private _lastFrameAt   = 0;
+  private _disposed      = false;
+  private _onVisibility = () => {
+    if (document.hidden) {
+      if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = 0; }
+    } else if (this._rafId === 0 && !this._disposed) {
+      this._lastFrameAt = 0;
+      this.animate();
+    }
+  };
 
   // ── Exterior void FX (orbiting rig outside the globe) ──────────────────────
   private fxReveal = 0;                 // 0 when the globe fills the view, →1 zoomed out
@@ -99,6 +114,7 @@ export class SphereRenderer {
     this.updateStones();
     this.initVoidFX();
     this.setupEvents();
+    document.addEventListener('visibilitychange', this._onVisibility);
     this.animate();
   }
 
@@ -129,7 +145,7 @@ export class SphereRenderer {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(w, h);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_TOUCH ? 1.5 : 2));
     this.renderer.toneMapping = THREE.ReinhardToneMapping;
     this.renderer.toneMappingExposure = 1.2;
     document.body.appendChild(this.renderer.domElement);
@@ -633,8 +649,12 @@ export class SphereRenderer {
   }
 
   // ── Animate ───────────────────────────────────────────────────────────────
-  private animate() {
-    this._rafId = requestAnimationFrame(() => this.animate());
+  private animate(now = 0) {
+    this._rafId = requestAnimationFrame((t) => this.animate(t));
+    if (this._frameInterval > 0) {
+      if (now - this._lastFrameAt < this._frameInterval) return;
+      this._lastFrameAt = now;
+    }
     this.hoverPhase += 0.05;
     this.controls.update();
     this.updateVoidFX();
@@ -694,8 +714,10 @@ export class SphereRenderer {
 
   // ── Disposal ────────────────────────────────────────────────────────────────
   dispose() {
+    this._disposed = true;
     cancelAnimationFrame(this._rafId);
     window.removeEventListener('resize', this._onResize);
+    document.removeEventListener('visibilitychange', this._onVisibility);
     this.controls.dispose();
     this.scene.traverse((obj) => {
       const o = obj as unknown as { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };

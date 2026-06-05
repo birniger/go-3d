@@ -5,6 +5,13 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { Go3D, Player, Cell, TerritoryResult } from './game';
 
+// Touch devices (phones/tablets) get a lower render resolution and a capped
+// frame rate: the bloom post-processing pipeline is fragment-bound, so on a
+// high-DPI phone running it at full devicePixelRatio and 60fps pegs the GPU and
+// overheats the device. These caps cut that load dramatically with little
+// visible difference at phone screen sizes.
+const IS_TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+
 // ── Palette ───────────────────────────────────────────────────────────────────
 const CYAN   = 0x00e5ff;
 const PINK   = 0xff0077;
@@ -249,6 +256,26 @@ export class Renderer {
   private _rafId       = 0;
   private _dotsDirty   = true;
   private _hoshiDirty  = true;
+  // Stone depth-cueing colours only need recomputing when the camera moves or
+  // the board/slice/cursor changes — not every frame. Saves an O(stones) loop
+  // plus two instanced-buffer GPU uploads on every idle frame.
+  private _stonesColorDirty = true;
+  private _lastCamPos  = new THREE.Vector3(Infinity, Infinity, Infinity);
+  private _lastCamQuat = new THREE.Quaternion();
+  // Frame-rate cap (ms between frames; 0 = uncapped) and the last frame stamp.
+  private _frameInterval = IS_TOUCH ? 1000 / 40 : 0;
+  private _lastFrameAt   = 0;
+  private _disposed      = false;
+  // Pause the render loop while the tab/page is hidden so it doesn't burn the
+  // battery/GPU in the background; resume on return.
+  private _onVisibility = () => {
+    if (document.hidden) {
+      if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = 0; }
+    } else if (this._rafId === 0 && !this._disposed) {
+      this._lastFrameAt = 0;
+      this.animate();
+    }
+  };
   private _onResize = () => {
     const w = window.innerWidth, h = window.innerHeight;
     this._vw = w; this._vh = h;
@@ -273,6 +300,7 @@ export class Renderer {
     this.initEffects();
     this.setupEvents();
     this.startIntroOrbit();
+    document.addEventListener('visibilitychange', this._onVisibility);
     this.animate();
   }
 
@@ -291,7 +319,7 @@ export class Renderer {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(w, h);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_TOUCH ? 1.5 : 2));
     this.renderer.toneMapping = THREE.ReinhardToneMapping;
     this.renderer.toneMappingExposure = 1.2;
     document.body.appendChild(this.renderer.domElement);
@@ -1083,7 +1111,7 @@ export class Renderer {
 
     this.blackStones.count = bi; this.blackStones.instanceMatrix.needsUpdate = true;
     this.whiteStones.count = wi; this.whiteStones.instanceMatrix.needsUpdate = true;
-    this._updateStoneColors();
+    this._stonesColorDirty = true;
 
     if (lm) {
       this.lastMoveMesh.position.set(this.coord(lm[0]), this.coord(lm[1]), this.coord(lm[2]));
@@ -1346,10 +1374,22 @@ export class Renderer {
     this.sound.forbidden();
   }
 
+  /** True when the camera moved since the last check; refreshes the snapshot. */
+  private cameraMoved(): boolean {
+    const moved = !this.camera.position.equals(this._lastCamPos) ||
+                  !this.camera.quaternion.equals(this._lastCamQuat);
+    if (moved) {
+      this._lastCamPos.copy(this.camera.position);
+      this._lastCamQuat.copy(this.camera.quaternion);
+    }
+    return moved;
+  }
+
   // ── Keyboard cursor ───────────────────────────────────────────────────────
   setCursorActive(on: boolean) {
     this.cursorActive = on;
     if (!on) this.hoverMesh.visible = false;
+    this._stonesColorDirty = true;
   }
 
   setCursorPos(x: number, y: number, z: number) {
@@ -1364,6 +1404,7 @@ export class Renderer {
     if (nx !== this.cursorPos.x || ny !== this.cursorPos.y || nz !== this.cursorPos.z)
       this.rippleTimer = 1;
     this.cursorPos = { x: nx, y: ny, z: nz };
+    this._stonesColorDirty = true; // cursor height affects stone dimming
   }
 
   moveCursor(dx: number, dy: number, dz: number) {
@@ -1419,7 +1460,7 @@ export class Renderer {
     // Dot/hoshi visibility depends on slice — mark dirty
     this._dotsDirty  = true;
     this._hoshiDirty = true;
-    this._updateStoneColors();
+    this._stonesColorDirty = true;
   }
 
   /**
@@ -1429,9 +1470,10 @@ export class Renderer {
   setStackLayer(layer: number | null) {
     this.stackLayer = layer;
     if (this.stackPlane) this.stackPlane.visible = layer !== null;
-    // The active layer drives lattice dimming — recolour dots/hoshi.
+    // The active layer drives lattice dimming — recolour dots/hoshi/stones.
     this._dotsDirty  = true;
     this._hoshiDirty = true;
+    this._stonesColorDirty = true;
   }
 
   // ── Camera control ────────────────────────────────────────────────────────
@@ -1515,8 +1557,15 @@ export class Renderer {
   }
 
   // ── Animate ───────────────────────────────────────────────────────────────
-  private animate() {
-    this._rafId = requestAnimationFrame(() => this.animate());
+  private animate(now = 0) {
+    this._rafId = requestAnimationFrame((t) => this.animate(t));
+    // Frame-rate cap (touch devices): bail out early on frames that arrive
+    // sooner than the target interval, so the heavy render work runs at the
+    // capped rate while the loop itself stays alive.
+    if (this._frameInterval > 0) {
+      if (now - this._lastFrameAt < this._frameInterval) return;
+      this._lastFrameAt = now;
+    }
     this.hoverPhase += 0.05;
 
     // Camera: intro orbit
@@ -1558,8 +1607,14 @@ export class Renderer {
     this.particles.rotation.y += 0.0002;
     this.updateVoidFX();
 
-    // Stone depth-cueing updates every frame (camera moves); dots/hoshi only on slice change
-    this._updateStoneColors();
+    // Stone depth-cueing depends only on camera position + board/slice/cursor;
+    // recompute only when one of those actually changed (dots/hoshi already
+    // dirty-flag the same way). cameraMoved() also refreshes the camera snapshot.
+    const camMoved = this.cameraMoved();
+    if (this._stonesColorDirty || camMoved) {
+      this._updateStoneColors();
+      this._stonesColorDirty = false;
+    }
     if (this._dotsDirty)  { this._updateDotVisibility();   this._dotsDirty  = false; }
     if (this._hoshiDirty) { this._updateHoshiVisibility(); this._hoshiDirty = false; }
 
@@ -1755,8 +1810,10 @@ export class Renderer {
 
   // ── Disposal ──────────────────────────────────────────────────────────────
   dispose() {
+    this._disposed = true;
     cancelAnimationFrame(this._rafId);
     window.removeEventListener('resize', this._onResize);
+    document.removeEventListener('visibilitychange', this._onVisibility);
     this.controls.dispose();
     // Dispose all Three.js geometries and materials in the scene
     this.scene.traverse((obj) => {
