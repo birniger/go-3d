@@ -16,6 +16,18 @@ function notify() {
   _listeners.forEach(l => l(_user));
 }
 
+/**
+ * Coerce numeric user fields to real numbers. WPDB serialises ids/stats as
+ * strings, but the rest of the app compares `user.id` against numeric ids from
+ * the game endpoints with strict equality (===). A string id silently fails
+ * those checks — most visibly mis-assigning the player's colour so the board
+ * thinks it's never your turn. Normalising here makes every comparison safe
+ * regardless of which endpoint (or cached payload) produced the user.
+ */
+function normalizeUser(u: User): User {
+  return { ...u, id: Number(u.id), elo: Number(u.elo) };
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export const AuthState = {
@@ -36,7 +48,7 @@ export const AuthState = {
     const token = getToken();
     if (!token) return null;
     try {
-      _user = await AuthAPI.me();
+      _user = normalizeUser(await AuthAPI.me());
       notify();
       return _user;
     } catch (err) {
@@ -51,7 +63,7 @@ export const AuthState = {
   async login(email: string, password: string): Promise<User> {
     const res = await AuthAPI.login(email, password);
     setToken(res.token);
-    _user = res.user;
+    _user = normalizeUser(res.user);
     notify();
     return _user;
   },
@@ -64,7 +76,7 @@ export const AuthState = {
   async verifyCode(email: string, code: string): Promise<User> {
     const res = await AuthAPI.verifyCode(email, code);
     setToken(res.token);
-    _user = res.user;
+    _user = normalizeUser(res.user);
     notify();
     return _user;
   },

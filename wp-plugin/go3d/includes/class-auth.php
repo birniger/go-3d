@@ -251,6 +251,15 @@ class Go3D_Auth {
     /** Strip private fields before sending to clients. */
     public static function public_user( array $user ): array {
         unset( $user['password_hash'], $user['verification_token'], $user['verification_code'], $user['reset_token'], $user['reset_expires'], $user['email'] );
+
+        // WPDB returns every column as a string. The client compares the user's
+        // id against numeric ids from the game endpoints with strict equality
+        // (e.g. player1_id === user.id to assign black/white), so a string id
+        // silently fails those checks. Cast numeric fields to real ints here so
+        // the API contract matches the game-state endpoints.
+        foreach ( [ 'id', 'elo', 'games_played', 'wins', 'losses', 'draws', 'email_verified' ] as $f ) {
+            if ( isset( $user[ $f ] ) ) $user[ $f ] = (int) $user[ $f ];
+        }
         return $user;
     }
 

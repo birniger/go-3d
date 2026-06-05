@@ -76,8 +76,11 @@ export class MultiplayerController {
 
   constructor(gameState: GameState, private callbacks: MultiplayerCallbacks) {
     this.gameState    = gameState;
-    const uid         = AuthState.user!.id;
-    this.mySlot       = gameState.player1_id === uid ? 1 : 2;
+    // Coerce both sides: ids can arrive as strings from some endpoints, and a
+    // strict-equality mismatch here mis-assigns the player's colour so the
+    // board believes it's never their turn (no one can ever move).
+    const uid         = Number(AuthState.user!.id);
+    this.mySlot       = Number(gameState.player1_id) === uid ? 1 : 2;
     this.currentPlayer = gameState.current_player as 1 | 2;
     this.p1Ms         = gameState.p1_time_ms;
     this.p2Ms         = gameState.p2_time_ms;
