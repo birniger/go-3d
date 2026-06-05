@@ -984,6 +984,45 @@ class Go3D_Game {
         }
     }
 
+    /** Days of total inactivity after which a game is considered abandoned. */
+    const ABANDON_DAYS = 7;
+
+    /**
+     * Clean up games that have been abandoned, covering two cases the clock
+     * sweep can't:
+     *   1. Open games that never found an opponent.
+     *   2. Active games where the first move was never played — the clock only
+     *      starts on the first move, so these never time out and would sit
+     *      "active" forever.
+     *
+     * Both are effectively non-games (zero moves), so they're deleted rather
+     * than recorded as losses — no ELO change, no cluttered history. Active
+     * games WITH moves are left to the clock (timed) or to the players
+     * (correspondence) as before.
+     *
+     * Called from WP-Cron alongside process_timeouts().
+     */
+    public static function process_abandoned(): void {
+        global $wpdb;
+        $g      = $wpdb->prefix . 'go3d_games';
+        $m      = $wpdb->prefix . 'go3d_moves';
+        $cutoff = gmdate( 'Y-m-d H:i:s', time() - self::ABANDON_DAYS * DAY_IN_SECONDS );
+
+        $ids = $wpdb->get_col( $wpdb->prepare(
+            "SELECT id FROM $g
+              WHERE created_at < %s
+                AND ( status = 'open'
+                   OR ( status = 'active' AND last_move_at IS NULL ) )",
+            $cutoff
+        ) );
+
+        foreach ( $ids as $id ) {
+            $id = (int) $id;
+            $wpdb->delete( $g, [ 'id' => $id ] );
+            $wpdb->delete( $m, [ 'game_id' => $id ] );
+        }
+    }
+
     /**
      * If the given (active, timed) game's current player has run out the clock,
      * end the game by timeout. Returns true if the game was ended.

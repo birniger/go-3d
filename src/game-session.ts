@@ -583,6 +583,7 @@ export class GameSession {
     if (this.scoreShowing) this.refreshScore();
     else this.renderer.showTerritory({});
     document.getElementById('go3d-score-btn')?.classList.toggle('go3d-vc-on', this.scoreShowing);
+    document.getElementById('go3d-mobile-score')?.classList.toggle('go3d-vc-on', this.scoreShowing);
   }
 
   private refreshScore(): void {
@@ -747,6 +748,13 @@ export class GameSession {
     bind('go3d-mobile-slice-prev', () => this.stepSlice(-1));
     bind('go3d-mobile-slice-next', () => this.stepSlice(1));
     bind('go3d-mobile-place', () => this.placeCursor());
+    // "More" row — these mirror the desktop floating controls, which are hidden
+    // on mobile to free up the canvas (see go3d.css). They reuse the exact same
+    // handlers so behaviour stays in one place.
+    bind('go3d-mobile-score', () => this.toggleScore());
+    bind('go3d-mobile-moves', toggleHistory);
+    bind('go3d-mobile-undo',  () => void this.doUndo());
+    bind('go3d-mobile-help',  () => openHelpOverlay());
     document.querySelectorAll<HTMLButtonElement>('[data-go3d-cursor]').forEach(btn => {
       btn.onclick = () => {
         const [dx, dy, dz] = (btn.dataset.go3dCursor ?? '0,0,0').split(',').map(Number);
@@ -974,6 +982,7 @@ export class SphereGameSession {
     this.scoreShowing = !this.scoreShowing;
     this.renderer.showTerritory(this.scoreShowing ? this.computeTerritory() : {});
     document.getElementById('go3d-score-btn')?.classList.toggle('go3d-vc-on', this.scoreShowing);
+    document.getElementById('go3d-mobile-score')?.classList.toggle('go3d-vc-on', this.scoreShowing);
   }
 
   private buildAdjacency(count: number, edges: [number, number][]): number[][] {
@@ -1126,12 +1135,13 @@ export class SphereGameSession {
     const historyToggle = document.getElementById('go3d-history-toggle') as HTMLButtonElement | null;
     const historyClose = document.getElementById('go3d-history-close') as HTMLButtonElement | null;
     const drawer = document.getElementById('go3d-move-history-drawer');
-    if (historyToggle) historyToggle.onclick = () => {
+    const toggleHistory = () => {
       if (!drawer) return;
       const open = drawer.style.display === 'none' || drawer.style.display === '';
       drawer.style.display = open ? 'block' : 'none';
-      historyToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      historyToggle?.setAttribute('aria-expanded', open ? 'true' : 'false');
     };
+    if (historyToggle) historyToggle.onclick = toggleHistory;
     if (historyClose) historyClose.onclick = () => {
       if (drawer) drawer.style.display = 'none';
       historyToggle?.setAttribute('aria-expanded', 'false');
@@ -1144,6 +1154,15 @@ export class SphereGameSession {
         mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
       };
     }
+    // "More" row — mirror the desktop floating controls (hidden on mobile).
+    const mbind = (id: string, fn: () => void) => {
+      const el = document.getElementById(id) as HTMLButtonElement | null;
+      if (el) el.onclick = fn;
+    };
+    mbind('go3d-mobile-score', () => this.toggleScore());
+    mbind('go3d-mobile-moves', toggleHistory);
+    mbind('go3d-mobile-undo',  () => void this.doUndo());
+    mbind('go3d-mobile-help',  () => openHelpOverlay());
     const mobileStatus = document.getElementById('go3d-mobile-status');
     if (mobileStatus) mobileStatus.textContent = 'Rotate the globe, then tap a visible empty node';
   }

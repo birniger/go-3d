@@ -878,27 +878,18 @@
     justify-content: space-between;
   }
 
-  /* Actions (Pass/Resign/Undo) live bottom-right; the view controls
-     (Score/Moves/Help) move to the bottom-LEFT so the two groups no longer
-     stack on top of each other at this breakpoint. */
-  #go3d-view-controls {
-    top: auto;
-    left: 0.75rem;
-    right: auto;
-    bottom: 5.2rem;
-    align-items: flex-start;
-  }
+  /* On mobile the floating view controls (Score/Moves/Help) and Undo move into
+     the collapsible "Controls" bottom sheet (the "More" row), so only Pass and
+     Resign stay on the canvas. This declutters the play area and stops the
+     groups overlapping. */
+  #go3d-view-controls { display: none !important; }
+  #go3d-undo-btn      { display: none !important; }
 
-  #go3d-slice-group,
-  #go3d-camera-group {
-    display: none !important;
-  }
-
-  /* Stack-mode layer banner sits just above the left-hand view controls. */
+  /* Stack-mode layer banner: bottom-left, opposite the action buttons. */
   #go3d-layer-banner {
     top: auto;
     left: 0.75rem;
-    bottom: 8.6rem;
+    bottom: 5.25rem;
     transform: none;
   }
 
@@ -962,15 +953,14 @@
     flex-direction: column;
   }
 
-  /* Actions stack vertically on the right; view controls stay bottom-left, so
-     the two columns sit side-by-side without overlapping. */
+  /* Pass/Resign stack vertically on the right; the layer banner stays
+     bottom-left, clear of them. */
   #go3d-game-actions {
     flex-direction: column;
     gap: 0.35rem;
   }
 
   #go3d-layer-banner {
-    bottom: 8.6rem;
     max-width: 44vw;
   }
 }

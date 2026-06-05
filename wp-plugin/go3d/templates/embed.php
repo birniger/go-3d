@@ -440,6 +440,13 @@
           <span class="go3d-mobile-note">Rotate, then tap a visible empty node.</span>
         </div>
         <div class="go3d-mobile-row">
+          <span class="go3d-vc-label">More</span>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-score">Score</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-moves">Moves</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-undo">Undo</button>
+          <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-help">Help</button>
+        </div>
+        <div class="go3d-mobile-row">
           <span class="go3d-vc-label">Replay</span>
           <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-replay-prev">Prev</button>
           <button class="go3d-btn-ghost go3d-btn-sm" id="go3d-mobile-replay-next">Next</button>
