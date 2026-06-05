@@ -21,6 +21,7 @@ function go3d_uninstall_site(): void {
         $wpdb->prefix . 'go3d_challenges',
         $wpdb->prefix . 'go3d_friends',
         $wpdb->prefix . 'go3d_notif_log',
+        $wpdb->prefix . 'go3d_bug_reports',
     ];
     foreach ( $tables as $table ) {
         $wpdb->query( "DROP TABLE IF EXISTS `{$table}`" ); // phpcs:ignore

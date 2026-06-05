@@ -5,9 +5,9 @@
  */
 
 import { AuthState, apiErrorMessage } from './auth';
-import { Games, Users, GameSummary, User, FriendUser, Challenge, ApiError } from './api';
+import { Games, Users, BugReports, GameSummary, User, FriendUser, Challenge, ApiError } from './api';
 import { formatClock } from './multiplayer';
-import { confirmModal } from './modal';
+import { confirmModal, promptModal } from './modal';
 import {
   GameFormSettings,
   bindGameForm,
@@ -237,6 +237,8 @@ export class Lobby {
       this.showProfile(AuthState.user!.id);
     });
 
+    document.getElementById('go3d-bug-report-btn')?.addEventListener('click', () => void this.reportBug());
+
     document.getElementById('go3d-refresh-open')!.addEventListener('click', () => void this.loadOpenGames());
     document.getElementById('go3d-refresh-leaderboard')?.addEventListener('click', () => void this.loadLeaderboard());
     document.getElementById('go3d-refresh-social')?.addEventListener('click', () => void this.loadSocial());
@@ -293,6 +295,23 @@ export class Lobby {
       e.preventDefault();
       void this.searchUsers();
     });
+  }
+
+  /** Prompt for a bug description and submit it to the admin inbox. */
+  private async reportBug(): Promise<void> {
+    const message = await promptModal(
+      "Found a bug or something confusing? Describe what happened and we'll take a look.",
+      { title: 'Report a bug', confirm: 'Send report', placeholder: 'What went wrong? What were you doing?' },
+    );
+    if (!message) return;
+    try {
+      // Context helps triage: which screen + a short UA hint.
+      const context = `lobby · ${navigator.platform || ''}`.trim();
+      await BugReports.create(message, context);
+      showToast('Thanks! Your report was sent.', 'success');
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    }
   }
 
   // Start a hot-seat game from normalised form settings (same surface whether
@@ -876,7 +895,7 @@ function boardLabel(g: GameSummary): string {
 /** Plain-text variant for status bars/toasts where HTML chips would leak visibly. */
 function boardLabelText(g: GameSummary): string {
   const mode = g.mode ?? 'cube';
-  if (mode === 'sphere') return `Sphere ${10 * g.board_size * g.board_size + 2} sphere`;
+  if (mode === 'sphere') return `Sphere ${10 * g.board_size * g.board_size + 2}`;
   if (mode === 'stack') return `${g.board_size}³ stack`;
   return `${g.board_size}³`;
 }

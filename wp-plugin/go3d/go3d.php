@@ -28,6 +28,7 @@ foreach ( [
     'class-elo',
     'class-pusher',
     'class-notifications',
+    'class-bug-report',
     'class-api',
     'class-api-auth',
     'class-api-games',

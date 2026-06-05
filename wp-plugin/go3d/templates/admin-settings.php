@@ -1,4 +1,18 @@
-<?php if ( ! defined( 'ABSPATH' ) ) exit; ?>
+<?php
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+// Handle bug-report row actions (mark resolved / reopen / delete) before output.
+if ( ! empty( $_POST['go3d_bug_action'] ) && current_user_can( 'manage_options' ) ) {
+    check_admin_referer( 'go3d_bug_action' );
+    $bug_id = isset( $_POST['bug_id'] ) ? (int) $_POST['bug_id'] : 0;
+    $action = sanitize_text_field( wp_unslash( $_POST['go3d_bug_action'] ) );
+    if ( $bug_id ) {
+        if ( 'resolve' === $action )      Go3D_Bug_Report::set_resolved( $bug_id, true );
+        elseif ( 'reopen' === $action )   Go3D_Bug_Report::set_resolved( $bug_id, false );
+        elseif ( 'delete' === $action )   Go3D_Bug_Report::delete( $bug_id );
+    }
+}
+?>
 <div class="wrap">
   <h1><?php esc_html_e( 'Go³D Settings', 'go3d' ); ?></h1>
 
@@ -281,4 +295,67 @@
 
     <?php submit_button(); ?>
   </form>
+
+  <!-- ── Bug reports ─────────────────────────────────────────────── -->
+  <?php
+    $go3d_reports     = Go3D_Bug_Report::list( 200 );
+    $go3d_open_count  = Go3D_Bug_Report::unresolved_count();
+  ?>
+  <h2 style="margin-top:32px;">
+    <?php esc_html_e( 'Bug reports', 'go3d' ); ?>
+    <?php if ( $go3d_open_count > 0 ) : ?>
+      <span class="go3d-bug-badge" style="background:#d63638;color:#fff;border-radius:10px;padding:1px 9px;font-size:12px;vertical-align:middle;"><?php echo (int) $go3d_open_count; ?> <?php esc_html_e( 'open', 'go3d' ); ?></span>
+    <?php endif; ?>
+  </h2>
+  <p class="description"><?php esc_html_e( 'Reports players submit from the lobby (“Report a bug”).', 'go3d' ); ?></p>
+
+  <?php if ( empty( $go3d_reports ) ) : ?>
+    <p><em><?php esc_html_e( 'No bug reports yet.', 'go3d' ); ?></em></p>
+  <?php else : ?>
+    <table class="widefat striped" style="max-width:1000px;margin-top:8px;">
+      <thead>
+        <tr>
+          <th style="width:140px;"><?php esc_html_e( 'When', 'go3d' ); ?></th>
+          <th style="width:130px;"><?php esc_html_e( 'Player', 'go3d' ); ?></th>
+          <th><?php esc_html_e( 'Report', 'go3d' ); ?></th>
+          <th style="width:170px;"><?php esc_html_e( 'Actions', 'go3d' ); ?></th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ( $go3d_reports as $r ) : ?>
+          <tr<?php echo $r['resolved'] ? ' style="opacity:0.55;"' : ''; ?>>
+            <td>
+              <?php echo esc_html( get_date_from_gmt( $r['created_at'], 'Y-m-d H:i' ) ); ?>
+              <?php if ( $r['resolved'] ) : ?><br><span style="color:#46b450;">✔ <?php esc_html_e( 'resolved', 'go3d' ); ?></span><?php endif; ?>
+            </td>
+            <td>
+              <?php echo $r['username'] ? esc_html( $r['username'] ) : '<em>' . esc_html__( 'anonymous', 'go3d' ) . '</em>'; ?>
+            </td>
+            <td>
+              <div style="white-space:pre-wrap;word-break:break-word;"><?php echo esc_html( $r['message'] ); ?></div>
+              <?php if ( ! empty( $r['context'] ) || ! empty( $r['user_agent'] ) ) : ?>
+                <div style="color:#888;font-size:11px;margin-top:4px;">
+                  <?php if ( ! empty( $r['context'] ) ) echo esc_html( $r['context'] ) . ' · '; ?>
+                  <?php echo esc_html( $r['user_agent'] ); ?>
+                </div>
+              <?php endif; ?>
+            </td>
+            <td>
+              <form method="post" style="display:inline;">
+                <?php wp_nonce_field( 'go3d_bug_action' ); ?>
+                <input type="hidden" name="bug_id" value="<?php echo (int) $r['id']; ?>">
+                <?php if ( $r['resolved'] ) : ?>
+                  <button class="button button-small" name="go3d_bug_action" value="reopen"><?php esc_html_e( 'Reopen', 'go3d' ); ?></button>
+                <?php else : ?>
+                  <button class="button button-small button-primary" name="go3d_bug_action" value="resolve"><?php esc_html_e( 'Resolve', 'go3d' ); ?></button>
+                <?php endif; ?>
+                <button class="button button-small button-link-delete" name="go3d_bug_action" value="delete"
+                        onclick="return confirm('<?php echo esc_js( __( 'Delete this report?', 'go3d' ) ); ?>');"><?php esc_html_e( 'Delete', 'go3d' ); ?></button>
+              </form>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  <?php endif; ?>
 </div>

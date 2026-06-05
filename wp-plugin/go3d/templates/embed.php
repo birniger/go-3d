@@ -142,6 +142,7 @@
         <span id="go3d-lobby-username"></span>
         <span id="go3d-lobby-elo" class="go3d-elo-badge"></span>
         <a href="#" id="go3d-profile-link">Profile</a>
+        <button id="go3d-bug-report-btn" class="go3d-btn-ghost" title="Report a bug">Report a bug</button>
         <button id="go3d-logout-btn" class="go3d-btn-ghost">Log out</button>
       </div>
     </header>

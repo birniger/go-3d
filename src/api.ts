@@ -366,3 +366,8 @@ export const Users = {
   removeFriend: (friendship_id: number) =>
     del<{ message: string }>(`/users/friends/${friendship_id}`),
 };
+
+export const BugReports = {
+  create: (message: string, context = '') =>
+    post<{ message: string }>('/bug-report', { message, context }),
+};

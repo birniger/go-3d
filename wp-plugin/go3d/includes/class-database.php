@@ -3,7 +3,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 class Go3D_Database {
 
-    const DB_VERSION = '1.4';
+    const DB_VERSION = '1.5';
 
     /**
      * Run install() (dbDelta) whenever the stored schema version is behind the
@@ -156,6 +156,21 @@ class Go3D_Database {
             sent_at   DATETIME    NOT NULL,
             PRIMARY KEY (id),
             KEY idx_user_game_type (user_id, game_id, type)
+        ) $charset;" );
+
+        // ── Bug reports (player-submitted, surfaced in wp-admin) ──────────────
+        dbDelta( "CREATE TABLE {$wpdb->prefix}go3d_bug_reports (
+            id         BIGINT(20)   NOT NULL AUTO_INCREMENT,
+            user_id    BIGINT(20)            DEFAULT NULL,
+            username   VARCHAR(60)           DEFAULT NULL,
+            message    TEXT         NOT NULL,
+            context    VARCHAR(255)          DEFAULT NULL,
+            user_agent VARCHAR(255)          DEFAULT NULL,
+            resolved   TINYINT(1)   NOT NULL DEFAULT 0,
+            created_at DATETIME     NOT NULL,
+            PRIMARY KEY (id),
+            KEY idx_resolved (resolved),
+            KEY idx_created  (created_at)
         ) $charset;" );
 
         update_option( 'go3d_db_version', self::DB_VERSION );

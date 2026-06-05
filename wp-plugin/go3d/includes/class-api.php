@@ -26,6 +26,27 @@ class Go3D_API {
             'callback'            => [ __CLASS__, 'pusher_health' ],
             'permission_callback' => [ __CLASS__, 'is_admin' ],
         ] );
+
+        // Player bug reports (submitted from the lobby; read in wp-admin).
+        register_rest_route( self::NAMESPACE, '/bug-report', [
+            'methods'             => 'POST',
+            'callback'            => [ __CLASS__, 'bug_report' ],
+            'permission_callback' => '__return_true',
+        ] );
+    }
+
+    // ── Bug reports ────────────────────────────────────────────────────────────
+
+    public static function bug_report( WP_REST_Request $req ): WP_REST_Response {
+        // Logged-in users are attributed via JWT; anonymous reports are allowed too.
+        $user_id = Go3D_JWT::current_user_id() ?? 0;
+        $message = (string) ( $req->get_param( 'message' ) ?? '' );
+        $context = (string) ( $req->get_param( 'context' ) ?? '' );
+
+        $result = Go3D_Bug_Report::create( (int) $user_id, $message, $context );
+        if ( ! $result['ok'] ) return self::error( $result['error'], $result['code'] );
+
+        return self::ok( [ 'message' => 'Thanks! Your report was sent.' ], 201 );
     }
 
     // ── Pusher channel auth ───────────────────────────────────────────────────
