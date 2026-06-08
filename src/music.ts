@@ -42,6 +42,30 @@ export class MusicSystem {
 
   constructor() {
     this.enabled = localStorage.getItem('go3d_music') !== 'off'; // default on
+    this.installGestureUnlock();
+  }
+
+  /**
+   * iOS/Safari only unlock WebAudio when the context is created/resumed inside a
+   * user gesture. Music starts on game entry, which for online games happens
+   * after an async game-state fetch — i.e. outside the gesture — so on iPhone it
+   * would stay silent. Create + resume the context on the very first user
+   * interaction (login click, board tap, …); once unlocked it survives across
+   * awaits, so the later start() plays normally.
+   */
+  private installGestureUnlock(): void {
+    const events = [ 'pointerdown', 'touchend', 'mousedown', 'keydown' ];
+    const unlock = () => {
+      try {
+        const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (Ctor) {
+          if (!this.ctx) this.ctx = new Ctor();
+          if (this.ctx.state === 'suspended') void this.ctx.resume();
+        }
+      } catch { /* ignore — best effort */ }
+      events.forEach(e => window.removeEventListener(e, unlock));
+    };
+    events.forEach(e => window.addEventListener(e, unlock, { passive: true }));
   }
 
   // ── Public lifecycle ───────────────────────────────────────────────────────
