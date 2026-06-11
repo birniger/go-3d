@@ -1018,8 +1018,22 @@ class Go3D_Game {
 
         foreach ( $ids as $id ) {
             $id = (int) $id;
-            $wpdb->delete( $g, [ 'id' => $id ] );
-            $wpdb->delete( $m, [ 'game_id' => $id ] );
+            // Re-check the abandonment conditions inside the DELETE itself
+            // (same atomic-guard pattern as cancel()): between the SELECT above
+            // and this statement a player may have joined the open game or made
+            // the first move — an unconditional delete-by-id would then destroy
+            // a live game. If the guard no longer matches, the delete is a no-op
+            // and we leave the moves untouched.
+            $deleted = $wpdb->query( $wpdb->prepare(
+                "DELETE FROM $g
+                  WHERE id = %d
+                    AND ( status = 'open'
+                       OR ( status = 'active' AND last_move_at IS NULL ) )",
+                $id
+            ) );
+            if ( $deleted ) {
+                $wpdb->delete( $m, [ 'game_id' => $id ] );
+            }
         }
     }
 

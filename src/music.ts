@@ -43,6 +43,16 @@ export class MusicSystem {
   constructor() {
     this.enabled = localStorage.getItem('go3d_music') !== 'off'; // default on
     this.installGestureUnlock();
+    // Pause playback while the tab is hidden (the renderer already pauses):
+    // suspending the context freezes currentTime, so the look-ahead scheduler
+    // — which browsers throttle in background tabs — can't fall behind and
+    // burst-schedule past-due notes on return. Resume picks up cleanly.
+    document.addEventListener('visibilitychange', () => {
+      const c = this.ctx;
+      if (!c || !this.running) return;
+      if (document.hidden) void c.suspend();
+      else { void c.resume(); this.nextStepTime = c.currentTime + 0.15; }
+    });
   }
 
   /**
@@ -185,6 +195,10 @@ export class MusicSystem {
     const c = this.ctx;
     if (!c || !this.running) return;
     const stepDur = 60 / this.bpm / 2; // eighth notes
+    // If the interval was throttled (background tab, heavy main thread) the
+    // step clock can fall behind the audio clock; scheduling those past-due
+    // notes would smear them all at once "now". Skip ahead instead.
+    if (this.nextStepTime < c.currentTime) this.nextStepTime = c.currentTime + 0.05;
     while (this.nextStepTime < c.currentTime + 0.12) {
       this.scheduleStep(this.step, this.nextStepTime);
       this.nextStepTime += stepDur;

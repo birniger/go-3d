@@ -130,6 +130,10 @@ function resetViewControls(): void {
   show('go3d-layer-banner', false);
   show('go3d-move-history-drawer', false);
   show('go3d-mobile-controls', false);
+  // The mobile "More" popover lives in #go3d-game-actions (not the mobile
+  // sheet), so close it explicitly or it re-appears open in the next game.
+  show('go3d-mobile-more-menu', false);
+  document.getElementById('go3d-mobile-more')?.setAttribute('aria-expanded', 'false');
   for (const id of ['go3d-slice-x', 'go3d-slice-y', 'go3d-slice-z', 'go3d-score-btn']) {
     document.getElementById(id)?.classList.remove('go3d-vc-on');
   }
