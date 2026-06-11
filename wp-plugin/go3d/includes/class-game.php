@@ -37,7 +37,9 @@ class Go3D_Game {
             $board_size = max( self::CUBE_SIZE_MIN, min( self::CUBE_SIZE_MAX, (int)( $settings['board_size'] ?? 9 ) ) );
         }
         $scoring_mode = in_array( $settings['scoring_mode'] ?? '', ['chinese','japanese'],      true ) ? $settings['scoring_mode']      : 'chinese';
-        $komi         = (float)( $settings['komi']         ?? 6.5 );
+        // Clamp komi to the column's DECIMAL(4,1) range — an out-of-range float
+        // from the API would otherwise fail the insert with an opaque 500.
+        $komi         = max( -361.0, min( 361.0, (float)( $settings['komi'] ?? 6.5 ) ) );
         $time_control = in_array( $settings['time_control'] ?? '', ['none','absolute','byoyomi','fischer'], true ) ? $settings['time_control'] : 'none';
         $time_settings = isset( $settings['time_settings'] ) ? wp_json_encode( $settings['time_settings'] ) : null;
 

@@ -222,13 +222,21 @@ class Go3D_API_Games {
         ), ARRAY_A ) ?: [];
 
         // Outgoing: show pending + recently accepted (so the challenger sees the
-        // "Enter game" link after the challenged player accepts).
+        // "Enter game" link after the challenged player accepts). "Recently"
+        // must be measured from the ACCEPTANCE — the game row is created at
+        // accept time, so test the game's created_at; the challenge's own
+        // created_at is when it was SENT, which made accepts of older
+        // challenges invisible to the challenger.
+        $g = $wpdb->prefix . 'go3d_games';
         $outgoing = $wpdb->get_results( $wpdb->prepare(
             "SELECT $select, u.username AS challenged_name, u.elo AS challenged_elo
              FROM $c ch JOIN $u u ON u.id = ch.challenged_id
              WHERE ch.challenger_id = %d
                AND ((ch.status = 'pending' AND ch.expires_at > UTC_TIMESTAMP())
-                 OR (ch.status = 'accepted' AND ch.game_id IS NOT NULL AND ch.created_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 5 MINUTE)))
+                 OR (ch.status = 'accepted' AND ch.game_id IS NOT NULL AND EXISTS (
+                       SELECT 1 FROM $g g
+                        WHERE g.id = ch.game_id
+                          AND g.created_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 5 MINUTE) )))
              ORDER BY ch.created_at DESC LIMIT 50",
             $user_id
         ), ARRAY_A ) ?: [];
@@ -288,6 +296,13 @@ class Go3D_API_Games {
         ), ARRAY_A );
         if ( ! $ch ) return Go3D_API::error( 'Challenge not found.', 404 );
 
+        // Atomically claim the challenge BEFORE creating the game. Without this
+        // a double-tap on "Accept" (or two devices) passes the SELECT above
+        // twice and creates two duplicate games. The WHERE status='pending'
+        // makes the second claim a no-op — same guard pattern as decline.
+        $claimed = $wpdb->update( $t, [ 'status' => 'accepted' ], [ 'id' => $id, 'status' => 'pending' ] );
+        if ( 1 !== $claimed ) return Go3D_API::error( 'Challenge already handled.', 409 );
+
         $settings = [
             'board_size'    => (int)$ch['board_size'],
             'mode'          => $ch['mode'],
@@ -297,14 +312,18 @@ class Go3D_API_Games {
             'time_settings' => $ch['time_settings'] ? json_decode( $ch['time_settings'], true ) : null,
         ];
         $created = Go3D_Game::create( (int)$ch['challenger_id'], $settings );
-        if ( ! $created['ok'] ) return Go3D_API::error( $created['error'], $created['code'] );
+        if ( ! $created['ok'] ) {
+            // Roll the claim back so the challenge can be retried.
+            $wpdb->update( $t, [ 'status' => 'pending' ], [ 'id' => $id ] );
+            return Go3D_API::error( $created['error'], $created['code'] );
+        }
         $joined = Go3D_Game::join( (int)$created['game_id'], $user_id );
-        if ( ! $joined['ok'] ) return Go3D_API::error( $joined['error'], $joined['code'] );
+        if ( ! $joined['ok'] ) {
+            $wpdb->update( $t, [ 'status' => 'pending' ], [ 'id' => $id ] );
+            return Go3D_API::error( $joined['error'], $joined['code'] );
+        }
 
-        $wpdb->update( $t, [
-            'status'  => 'accepted',
-            'game_id' => (int)$created['game_id'],
-        ], [ 'id' => $id ] );
+        $wpdb->update( $t, [ 'game_id' => (int)$created['game_id'] ], [ 'id' => $id ] );
 
         return Go3D_API::ok( [ 'message' => 'Challenge accepted.', 'game_id' => (int)$created['game_id'] ] );
     }
