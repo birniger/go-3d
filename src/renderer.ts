@@ -12,6 +12,17 @@ import { Go3D, Player, Cell, TerritoryResult } from './game';
 // visible difference at phone screen sizes.
 const IS_TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 
+// Respect the OS-level reduced-motion preference in the WebGL scene too (the
+// CSS layer already honours it): no intro orbit, no void rig, no dust drift,
+// no grid breathing, instant stone placement.
+const REDUCED_MOTION = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** easeOutBack — stones land with a slight overshoot and settle. */
+function backOut(t: number): number {
+  const c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
 // ── Palette ───────────────────────────────────────────────────────────────────
 const CYAN   = 0x00e5ff;
 const PINK   = 0xff0077;
@@ -26,12 +37,17 @@ const TERRITORY_R = 0.11;
 // ── Sounds ────────────────────────────────────────────────────────────────────
 export class SoundSystem {
   private ctx: AudioContext | null = null;
+  /** Sound effects can be muted independently of the music (toggle in music.ts). */
+  private get muted(): boolean {
+    try { return localStorage.getItem('go3d_sfx') === 'off'; } catch { return false; }
+  }
   private get ac(): AudioContext {
     if (!this.ctx) this.ctx = new AudioContext();
     if (this.ctx.state === 'suspended') this.ctx.resume();
     return this.ctx;
   }
   place() {
+    if (this.muted) return;
     const c = this.ac, o = c.createOscillator(), g = c.createGain();
     o.connect(g); g.connect(c.destination);
     o.frequency.value = 700 + Math.random() * 150; o.type = 'sine';
@@ -40,6 +56,7 @@ export class SoundSystem {
     o.start(c.currentTime); o.stop(c.currentTime + 0.09);
   }
   capture(n: number) {
+    if (this.muted) return;
     const c = this.ac, len = c.sampleRate * 0.12;
     const buf = c.createBuffer(1, len, c.sampleRate);
     const d = buf.getChannelData(0);
@@ -51,6 +68,7 @@ export class SoundSystem {
     src.connect(g); g.connect(c.destination); src.start(); src.stop(c.currentTime + 0.18);
   }
   pass() {
+    if (this.muted) return;
     const c = this.ac;
     [440, 550, 660].forEach((f, i) => {
       const o = c.createOscillator(), g = c.createGain();
@@ -61,6 +79,7 @@ export class SoundSystem {
     });
   }
   forbidden() {
+    if (this.muted) return;
     const c = this.ac, o = c.createOscillator(), g = c.createGain();
     o.connect(g); g.connect(c.destination); o.frequency.value = 180; o.type = 'sawtooth';
     g.gain.setValueAtTime(0.1, c.currentTime);
@@ -133,7 +152,7 @@ export class Renderer {
   private captureMat2!: THREE.MeshPhysicalMaterial;
   private capturePool1: THREE.Mesh[] = [];
   private capturePool2: THREE.Mesh[] = [];
-  private captureAnims: { mesh: THREE.Mesh; life: number; pool: THREE.Mesh[] }[] = [];
+  private captureAnims: { mesh: THREE.Mesh; life: number; delay: number; burstColor: number; pool: THREE.Mesh[] }[] = [];
 
   // Particle bursts
   private bursts: ParticleBurst[] = [];
@@ -266,6 +285,8 @@ export class Renderer {
   // Frame-rate cap (ms between frames; 0 = uncapped) and the last frame stamp.
   private _frameInterval = IS_TOUCH ? 1000 / 40 : 0;
   private _lastFrameAt   = 0;
+  // Timestamp of the last RENDERED frame, for delta-time animation scaling.
+  private _lastT         = 0;
   private _disposed      = false;
   // Pause the render loop while the tab/page is hidden so it doesn't burn the
   // battery/GPU in the background; resume on return.
@@ -287,7 +308,8 @@ export class Renderer {
   private game:    Go3D;
   private onPlace: (x: number, y: number, z: number) => void;
 
-  constructor(game: Go3D, onPlace: (x: number, y: number, z: number) => void) {
+  constructor(game: Go3D, onPlace: (x: number, y: number, z: number) => void,
+              opts: { skipIntro?: boolean } = {}) {
     this.game    = game;
     this.onPlace = onPlace;
     this.initRenderer();
@@ -300,7 +322,11 @@ export class Renderer {
     this.initTerritory();
     this.initEffects();
     this.setupEvents();
-    this.startIntroOrbit();
+    // The reveal sweep only plays on a fresh game entry: undo reloads rebuild
+    // the session, and replaying the 1.3s orbit every accepted undo was noise.
+    if (opts.skipIntro || REDUCED_MOTION) { this.introPhase = -1; }
+    else this.startIntroOrbit();
+    if (REDUCED_MOTION) this.setVoidVisible(false);
     document.addEventListener('visibilitychange', this._onVisibility);
     this.animate();
   }
@@ -826,7 +852,16 @@ export class Renderer {
     else                 { s.r = 0.1; s.g = 1.0; s.b = 0.63; }
   }
 
-  private updateVoidFX() {
+  /** Hide/show every void-rig object (reduced-motion keeps the rig dark). */
+  private setVoidVisible(v: boolean) {
+    for (const fl of this.fadeLines) fl.mesh.visible = v;
+    this.streaks.visible = v; this.runners.visible = v; this.runnerHeads.visible = v;
+    for (const g of this.glyphs) g.spr.visible = v;
+    for (const r of this.rings) r.node.visible = v;
+    for (const p of this.pulses) p.mesh.visible = false;
+  }
+
+  private updateVoidFX(f: number) {
     this._camDir.copy(this.camera.position).normalize();
     const backLimit = -0.1;
 
@@ -843,8 +878,8 @@ export class Renderer {
     // — Comet-streaks: rotate along the shell; trail is the prior arc point —
     for (let i = 0; i < this.STREAK_N; i++) {
       const s = this.streakState[i];
-      s.life++;
-      if (s.life >= 0) s.p.applyAxisAngle(s.axis, s.omega);
+      s.life += f;
+      if (s.life >= 0) s.p.applyAxisAngle(s.axis, s.omega * f);
       if (s.life > s.max || s.p.dot(this._camDir) < backLimit * s.p.length()) { this.spawnStreak(i); }
       this._streakTail.copy(s.p).applyAxisAngle(s.axis, -s.omega * 11);   // long arc trail
       const t = s.life < 0 ? 0 : s.life / s.max;
@@ -861,9 +896,9 @@ export class Renderer {
 
     // — Containment rings + runner nodes —
     for (const ring of this.rings) {
-      ring.mesh.rotateOnAxis(ring.axis, ring.spin);
-      ring.phase += 0.04;                       // ring line brightness is per-vertex (updateFadeLines)
-      ring.nodeAng += ring.nodeSpd;
+      ring.mesh.rotateOnAxis(ring.axis, ring.spin * f);
+      ring.phase += 0.04 * f;                       // ring line brightness is per-vertex (updateFadeLines)
+      ring.nodeAng += ring.nodeSpd * f;
       ring.node.position.set(Math.cos(ring.nodeAng) * ring.radius, Math.sin(ring.nodeAng) * ring.radius, 0);
       ring.node.getWorldPosition(this._tmpV);
       const nm = ring.node.material as THREE.MeshBasicMaterial;
@@ -876,14 +911,14 @@ export class Renderer {
     for (const p of this.pulses) {
       if (!p.mesh.visible) continue;
       firing = true;
-      p.life += 1;
+      p.life += f;
       const u = p.life / p.max;                       // 0..1
       const R = this.keepR * (1.0 + u * 2.2);         // grows strictly outward
       p.mesh.scale.setScalar(R);
       p.bright = 0.8 * Math.max(0, 1 - u) * Math.max(0, Math.sin(Math.PI * Math.min(1, u * 3)));
       if (u >= 1) { p.mesh.visible = false; p.life = 0; }
     }
-    this.pulseCooldown -= 1;
+    this.pulseCooldown -= f;
     if (this.pulseCooldown <= 0) {
       const p = this.pulses.find(q => !q.mesh.visible);
       if (p) {
@@ -904,7 +939,7 @@ export class Renderer {
     // — Cage edge-runners —
     for (let i = 0; i < this.RUNNER_N; i++) {
       const rs = this.runnerState[i];
-      rs.t += rs.speed;
+      rs.t += rs.speed * f;
       while (rs.t > 1) {
         rs.t -= 1;
         // Jump to another edge sharing the corner we arrived at.
@@ -922,15 +957,15 @@ export class Renderer {
       const headT = rs.t, tailT = Math.max(0, rs.t - 0.16);
       const hx = A.x + (B.x-A.x)*headT, hy = A.y + (B.y-A.y)*headT, hz = A.z + (B.z-A.z)*headT;
       const tx = A.x + (B.x-A.x)*tailT, ty = A.y + (B.y-A.y)*tailT, tz = A.z + (B.z-A.z)*tailT;
-      const f = this.silhouetteFade(this._tmpV2.set(hx, hy, hz)) * this.fxReveal;
+      const fade = this.silhouetteFade(this._tmpV2.set(hx, hy, hz)) * this.fxReveal;
       const o = i*6;
       this.runnerPos[o]=hx; this.runnerPos[o+1]=hy; this.runnerPos[o+2]=hz;
-      this.runnerCol[o]=rs.r*f; this.runnerCol[o+1]=rs.g*f; this.runnerCol[o+2]=rs.b*f;
+      this.runnerCol[o]=rs.r*fade; this.runnerCol[o+1]=rs.g*fade; this.runnerCol[o+2]=rs.b*fade;
       this.runnerPos[o+3]=tx; this.runnerPos[o+4]=ty; this.runnerPos[o+5]=tz;
-      this.runnerCol[o+3]=rs.r*0.03*f; this.runnerCol[o+4]=rs.g*0.03*f; this.runnerCol[o+5]=rs.b*0.03*f;
+      this.runnerCol[o+3]=rs.r*0.03*fade; this.runnerCol[o+4]=rs.g*0.03*fade; this.runnerCol[o+5]=rs.b*0.03*fade;
       const h=i*3;
       this.runnerHeadPos[h]=hx; this.runnerHeadPos[h+1]=hy; this.runnerHeadPos[h+2]=hz;
-      this.runnerHeadCol[h]=rs.r*f; this.runnerHeadCol[h+1]=rs.g*f; this.runnerHeadCol[h+2]=rs.b*f;
+      this.runnerHeadCol[h]=rs.r*fade; this.runnerHeadCol[h+1]=rs.g*fade; this.runnerHeadCol[h+2]=rs.b*fade;
     }
     (this.runners.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
     (this.runners.geometry.attributes['color'] as THREE.BufferAttribute).needsUpdate = true;
@@ -939,8 +974,8 @@ export class Renderer {
 
     // — Glyph satellites (true circular orbit on far shell; never dips inward) —
     for (const gl of this.glyphs) {
-      gl.ang += gl.speed;
-      gl.flick += 0.25;
+      gl.ang += gl.speed * f;
+      gl.flick += 0.25 * f;
       const cx = Math.cos(gl.ang) * gl.r, sx = Math.sin(gl.ang) * gl.r;
       gl.spr.position.set(
         gl.u.x*cx + gl.v.x*sx,
@@ -1063,20 +1098,26 @@ export class Renderer {
   }
 
   triggerCaptures(positions: [number,number,number][], player: Player) {
+    // Stones further from the capturing move start their shrink later, so a
+    // multi-stone capture ripples outward from the killing stone.
+    const lm = this.game.lastMove;
+    const burstColor = player === 1 ? 0x0077ff : 0xff0077;
     for (const [x, y, z] of positions) {
       const mesh = this._getCaptureMesh(player);
       mesh.position.set(this.coord(x), this.coord(y), this.coord(z));
       mesh.scale.setScalar(1);
       (mesh.material as THREE.MeshPhysicalMaterial).opacity = 1;
       const pool = player === 1 ? this.capturePool1 : this.capturePool2;
-      this.captureAnims.push({ mesh, life: 0, pool });
-      this._spawnBurst(this.coord(x), this.coord(y), this.coord(z), player === 1 ? 0x0077ff : 0xff0077);
+      const dist = lm ? Math.hypot(x - lm[0], y - lm[1], z - lm[2]) : 0;
+      const delay = REDUCED_MOTION ? 0 : dist * 1.6;
+      this.captureAnims.push({ mesh, life: 0, delay, burstColor, pool });
+      if (delay <= 0) this._spawnBurst(this.coord(x), this.coord(y), this.coord(z), burstColor);
     }
   }
 
   updateStones() {
     this._rebuildStones();
-    if (this.game.lastMove) {
+    if (this.game.lastMove && !REDUCED_MOTION) {
       const [x, y, z] = this.game.lastMove;
       this.popInMap.set(`${x},${y},${z}`, 0.05);
     }
@@ -1104,7 +1145,8 @@ export class Renderer {
           if (!cell) continue;
           this.stoneEntries.push({ x, y, z, player: cell });
           const key   = `${x},${y},${z}`;
-          const scale = this.popInMap.get(key) ?? 1;
+          const pop   = this.popInMap.get(key);
+          const scale = pop === undefined ? 1 : backOut(Math.min(1, pop));
           dummy.position.set(this.coord(x), this.coord(y), this.coord(z));
           dummy.scale.setScalar(scale); dummy.updateMatrix();
           if (cell === 1) this.blackStones.setMatrixAt(bi++, dummy.matrix);
@@ -1590,11 +1632,18 @@ export class Renderer {
       if (now - this._lastFrameAt < this._frameInterval) return;
       this._lastFrameAt = now;
     }
-    this.hoverPhase += 0.05;
+    // Delta time in 60fps-frame units: every animation below multiplies its
+    // per-frame increment by f, so speeds are identical at any real frame rate
+    // (the touch cap renders ~40fps; without this everything ran a third
+    // slower on exactly the devices the cap was protecting). Clamped so a
+    // hidden-tab resume can't fast-forward animations.
+    const f = this._lastT > 0 ? Math.min(3, (now - this._lastT) / (1000 / 60)) : 1;
+    this._lastT = now;
+    this.hoverPhase += 0.05 * f;
 
     // Camera: intro orbit
     if (this.introPhase >= 0) {
-      this.introPhase = Math.min(1, this.introPhase + 0.013);
+      this.introPhase = Math.min(1, this.introPhase + 0.013 * f);
       const ease = 1 - Math.pow(1 - this.introPhase, 3);
       const angle = ease * Math.PI * 1.5;
       const d = this.game.size * (1.4 + (1 - ease) * 1.6);
@@ -1606,8 +1655,8 @@ export class Renderer {
         this.controls.enabled = true;
       }
     } else if (this.tweenTarget) {
-      // Camera: smooth tween to face-cam position
-      this.camera.position.lerp(this.tweenTarget, 0.1);
+      // Camera: smooth tween to face-cam position (frame-rate-corrected damping)
+      this.camera.position.lerp(this.tweenTarget, 1 - Math.pow(0.9, f));
       this.camera.lookAt(0, 0, 0);
       if (this.camera.position.distanceTo(this.tweenTarget) < 0.08) {
         this.camera.position.copy(this.tweenTarget);
@@ -1622,14 +1671,23 @@ export class Renderer {
     // Grid pulse — in stack mode the lattice structure recedes so the active
     // build layer reads clearly; otherwise it breathes at full strength.
     const stackFade = this.stackLayer !== null && this.sliceAxis === 'none';
+    const breathe = REDUCED_MOTION ? 0 : Math.sin(this.hoverPhase * 0.18);
     (this.innerGrid.material as THREE.LineBasicMaterial).opacity = stackFade
-      ? 0.10 + 0.04 * Math.sin(this.hoverPhase * 0.18)
-      : 0.55 + 0.35 * Math.sin(this.hoverPhase * 0.18);
+      ? 0.10 + 0.04 * breathe
+      : 0.55 + 0.35 * breathe;
     (this.boundingBox.material as THREE.LineBasicMaterial).opacity = stackFade ? 0.22 : 1;
 
     // Particle drift
-    this.particles.rotation.y += 0.0002;
-    this.updateVoidFX();
+    if (!REDUCED_MOTION) this.particles.rotation.y += 0.0002 * f;
+    // Void rig: skip the whole update while it is invisible (fxReveal is 0 at
+    // play framing) — previously every frame still rotated streaks, ran the
+    // per-vertex silhouette fades, and uploaded four GPU buffers for a rig
+    // nobody could see. The wake margin (2.5×size, below the 2.7×size reveal
+    // start) pre-warms it so everything is already moving by the time it
+    // fades in. Reduced-motion keeps it off entirely.
+    if (!REDUCED_MOTION && this.camera.position.length() > this.game.size * 2.5) {
+      this.updateVoidFX(f);
+    }
 
     // Stone depth-cueing depends only on camera position + board/slice/cursor;
     // recompute only when one of those actually changed (dots/hoshi already
@@ -1646,7 +1704,7 @@ export class Renderer {
     if (this.popInMap.size > 0) {
       let changed = false;
       for (const [k, sc] of this.popInMap) {
-        const ns = Math.min(1, sc + 0.09);
+        const ns = Math.min(1, sc + 0.09 * f);
         ns >= 1 ? this.popInMap.delete(k) : this.popInMap.set(k, ns);
         changed = true;
       }
@@ -1656,7 +1714,15 @@ export class Renderer {
     // Capture shrink animations
     for (let i = this.captureAnims.length - 1; i >= 0; i--) {
       const a = this.captureAnims[i];
-      a.life++;
+      // Stagger: stones further from the capturing move wait their turn, so
+      // multi-stone captures ripple outward instead of vanishing at once. The
+      // burst fires the moment each stone's shrink begins.
+      if (a.delay > 0) {
+        a.delay -= f;
+        if (a.delay > 0) continue;
+        this._spawnBurst(a.mesh.position.x, a.mesh.position.y, a.mesh.position.z, a.burstColor);
+      }
+      a.life += f;
       const t = a.life / 18;
       a.mesh.scale.setScalar(1 - t);
       (a.mesh.material as THREE.MeshPhysicalMaterial).opacity = 1 - t;
@@ -1665,13 +1731,13 @@ export class Renderer {
 
     // Particle bursts from captures
     for (let i = this.bursts.length - 1; i >= 0; i--) {
-      const b = this.bursts[i]; b.life++;
+      const b = this.bursts[i]; b.life += f;
       const pos = b.geo.attributes['position'] as THREE.BufferAttribute;
       for (let j = 0; j < pos.count; j++) {
-        pos.setX(j, pos.getX(j) + b.vel[j*3]);
-        pos.setY(j, pos.getY(j) + b.vel[j*3+1]);
-        pos.setZ(j, pos.getZ(j) + b.vel[j*3+2]);
-        b.vel[j*3+1] -= 0.0008;
+        pos.setX(j, pos.getX(j) + b.vel[j*3] * f);
+        pos.setY(j, pos.getY(j) + b.vel[j*3+1] * f);
+        pos.setZ(j, pos.getZ(j) + b.vel[j*3+2] * f);
+        b.vel[j*3+1] -= 0.0008 * f;
       }
       pos.needsUpdate = true;
       (b.pts.material as THREE.PointsMaterial).opacity = 1 - b.life/25;
@@ -1680,9 +1746,9 @@ export class Renderer {
 
     // Forbidden flash decay
     if (this.flashTimer > 0) {
-      this.flashTimer--;
+      this.flashTimer = Math.max(0, this.flashTimer - f);
       (this.flashMesh.material as THREE.MeshPhysicalMaterial).emissiveIntensity = (this.flashTimer/18)*3;
-      if (this.flashTimer === 0) this.flashMesh.visible = false;
+      if (this.flashTimer <= 0) this.flashMesh.visible = false;
     }
 
     // Last-move torus pulse + rotate
@@ -1690,8 +1756,8 @@ export class Renderer {
       const mat = this.lastMoveMesh.material as THREE.MeshBasicMaterial;
       mat.color.set(this.game.currentPlayer === 2 ? CYAN : PINK);
       mat.opacity = 0.4 + 0.4 * Math.sin(this.hoverPhase * 1.8);
-      this.lastMoveMesh.rotation.y += 0.02;
-      this.lastMoveMesh.rotation.x += 0.01;
+      this.lastMoveMesh.rotation.y += 0.02 * f;
+      this.lastMoveMesh.rotation.x += 0.01 * f;
     }
 
     // ── Hover ghost (mouse or keyboard cursor) ───────────────────────────────
@@ -1740,7 +1806,7 @@ export class Renderer {
       p[12] = cx; p[13] = cy; p[14] = lo;
       p[15] = cx; p[16] = cy; p[17] = hi;
       (this.axisLines.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
-      this.rippleTimer = Math.max(0, this.rippleTimer - 0.05);
+      this.rippleTimer = Math.max(0, this.rippleTimer - 0.05 * f);
       (this.axisLines.material as THREE.LineBasicMaterial).opacity = 0.25 + 0.5 * this.rippleTimer;
       this.axisLines.visible = true;
 

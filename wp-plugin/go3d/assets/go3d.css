@@ -995,3 +995,79 @@
     animation: none;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   POLISH LAYER (1.4.0) — micro-interactions, motion, identity
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Chrome autofill paints inputs white/yellow, bulldozing the dark theme. */
+#go3d-root input:-webkit-autofill,
+#go3d-root input:-webkit-autofill:hover,
+#go3d-root input:-webkit-autofill:focus {
+  -webkit-box-shadow: inset 0 0 0 1000px var(--go3d-bg);
+  -webkit-text-fill-color: var(--go3d-text);
+  caret-color: var(--go3d-text);
+  transition: background-color 99999s ease-in-out 0s;
+}
+
+/* Keyboard-navigation focus ring — neon, additive to the aesthetic. */
+#go3d-root button:focus-visible,
+#go3d-root a:focus-visible,
+#go3d-root input:focus-visible,
+#go3d-root select:focus-visible {
+  outline: 2px solid var(--go3d-cyan);
+  outline-offset: 2px;
+}
+
+/* Rows and ghost buttons react to hover. */
+.go3d-table tbody tr { transition: background 0.12s ease; }
+.go3d-table tbody tr:hover { background: rgba(0, 229, 255, 0.05); }
+.go3d-btn-ghost { transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease; }
+.go3d-btn-ghost:hover { transform: translateY(-1px); border-color: var(--go3d-cyan); }
+
+/* Toasts: accent bar + neutral text reads faster than a fully tinted box. */
+#go3d-toast { border-left-width: 3px; color: var(--go3d-text); }
+.go3d-toast-success { border-color: var(--go3d-border); border-left-color: var(--go3d-green); }
+.go3d-toast-error   { border-color: var(--go3d-border); border-left-color: var(--go3d-danger); }
+.go3d-toast-info    { border-color: var(--go3d-border); border-left-color: var(--go3d-cyan); }
+
+/* One-shot pulse on the turn label when it becomes your move. */
+@keyframes go3dTurnFlash {
+  0%   { text-shadow: 0 0 0 rgba(0, 229, 255, 0); }
+  30%  { text-shadow: 0 0 18px rgba(0, 229, 255, 0.95); color: var(--go3d-cyan); }
+  100% { text-shadow: 0 0 0 rgba(0, 229, 255, 0); }
+}
+.go3d-turn-flash { animation: go3dTurnFlash 0.9s ease-out; }
+
+/* Low-clock tension: the urgent clock throbs. */
+@keyframes go3dClockUrgent {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+.go3d-clock-urgent { animation: go3dClockUrgent 1s ease-in-out infinite; }
+
+/* Mobile sheet / More popover / history drawer slide in instead of teleporting. */
+@keyframes go3dSheetUp  { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes go3dPopIn    { from { transform: scale(0.92) translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
+.go3d-mobile-panel-open { animation: go3dSheetUp 0.18s ease-out; }
+.go3d-more-menu         { transform-origin: 100% 100%; }
+#go3d-mobile-more-menu[style*="flex"] { animation: go3dPopIn 0.15s ease-out; }
+#go3d-move-history-drawer[style*="block"] { animation: go3dSheetUp 0.18s ease-out; }
+
+/* Stone identity: who is Black / White, at a glance. */
+#go3d-p1-info::before, #go3d-p2-info::before {
+  content: ''; display: inline-block; width: 11px; height: 11px;
+  border-radius: 50%; margin-right: 7px; vertical-align: -1px; flex: none;
+}
+#go3d-p1-info::before { background: #0a0c12; border: 1px solid rgba(0, 229, 255, 0.8); }
+#go3d-p2-info::before { background: #e8eef6; border: 1px solid rgba(232, 238, 246, 0.4); }
+
+/* Provisional-rating marker (fewer than 30 rated games). */
+.go3d-prov { color: var(--go3d-muted); margin-left: 2px; cursor: help; }
+
+@media (prefers-reduced-motion: reduce) {
+  .go3d-turn-flash, .go3d-clock-urgent,
+  .go3d-mobile-panel-open, #go3d-mobile-more-menu[style*="flex"],
+  #go3d-move-history-drawer[style*="block"] { animation: none; }
+  .go3d-btn-ghost:hover { transform: none; }
+}

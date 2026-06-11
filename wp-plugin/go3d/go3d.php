@@ -3,7 +3,7 @@
  * Plugin Name:  3D Go
  * Plugin URI:   https://github.com/birniger/go-3d
  * Description:  Multiplayer 3D Go with user accounts, ELO ratings, and real-time play via Pusher. Includes a local hot-seat mode for two players at one screen.
- * Version:      1.3.8
+ * Version:      1.4.0
  * Author:       birniger
  * License:      MIT
  * Text Domain:  go3d
@@ -11,7 +11,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'GO3D_VERSION',    '1.3.8' );
+define( 'GO3D_VERSION',    '1.4.0' );
 define( 'GO3D_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'GO3D_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 

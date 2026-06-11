@@ -1037,6 +1037,24 @@ class Go3D_Game {
                 $wpdb->delete( $m, [ 'game_id' => $id ] );
             }
         }
+
+        // Housekeeping: stale challenge rows (expired pending after a day's
+        // grace; accepted/declined after 30 days) and old notification-log
+        // entries otherwise accumulate forever — they're already invisible to
+        // every query, so this is pure table hygiene.
+        $c = $wpdb->prefix . 'go3d_challenges';
+        $n = $wpdb->prefix . 'go3d_notif_log';
+        $wpdb->query( $wpdb->prepare(
+            "DELETE FROM $c
+              WHERE ( status = 'pending' AND expires_at < %s )
+                 OR ( status IN ('accepted','declined') AND created_at < %s )",
+            gmdate( 'Y-m-d H:i:s', time() - DAY_IN_SECONDS ),
+            gmdate( 'Y-m-d H:i:s', time() - 30 * DAY_IN_SECONDS )
+        ) );
+        $wpdb->query( $wpdb->prepare(
+            "DELETE FROM $n WHERE sent_at < %s",
+            gmdate( 'Y-m-d H:i:s', time() - 90 * DAY_IN_SECONDS )
+        ) );
     }
 
     /**

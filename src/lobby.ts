@@ -393,7 +393,7 @@ export class Lobby {
         tr.innerHTML = `
           <td>${i + 1}</td>
           <td><a href="#" class="go3d-lb-name" data-id="${p.id}">${escHtml(p.username)}</a></td>
-          <td>${p.elo}</td>
+          <td>${p.elo}${(p.games_played ?? 0) < 30 ? '<span class="go3d-prov" title="Provisional — fewer than 30 games">?</span>' : ''}</td>
           <td>${p.wins}</td>
           <td>${p.losses}</td>
           <td>${p.draws}</td>`;

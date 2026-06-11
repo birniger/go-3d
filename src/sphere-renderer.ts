@@ -22,6 +22,7 @@ import { SphereGeometry as GeoData } from './api';
 // Touch devices render at lower resolution and a capped frame rate to keep the
 // bloom pipeline from overheating the GPU (see the same constant in renderer.ts).
 const IS_TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+const REDUCED_MOTION = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const CYAN = 0x00e5ff;
 const PINK = 0xff0077;
@@ -71,6 +72,7 @@ export class SphereRenderer {
   private _rafId = 0;
   private _frameInterval = IS_TOUCH ? 1000 / 40 : 0;
   private _lastFrameAt   = 0;
+  private _lastT         = 0;
   private _disposed      = false;
   private _onVisibility = () => {
     if (document.hidden) {
@@ -581,7 +583,7 @@ export class SphereRenderer {
     return t * t * (3 - 2 * t);
   }
 
-  private updateVoidFX() {
+  private updateVoidFX(f: number) {
     this._camDir.copy(this.camera.position).normalize();
     if (this._camDir.lengthSq() < 1e-4) this._camDir.set(1, 0.6, 1).normalize();
 
@@ -595,7 +597,7 @@ export class SphereRenderer {
 
     // Rings — spin in place; per-vertex colour faded by silhouette × reveal.
     for (const ring of this.fxRings) {
-      ring.mesh.rotateOnAxis(ring.spinAxis, ring.spin);
+      ring.mesh.rotateOnAxis(ring.spinAxis, ring.spin * f);
       ring.mesh.updateWorldMatrix(true, false);
       const mw = ring.mesh.matrixWorld;
       const col = ring.colorAttr.array as Float32Array;
@@ -613,8 +615,8 @@ export class SphereRenderer {
 
     // Glyphs — advance along their orbit, flicker, fade.
     for (const gl of this.fxGlyphs) {
-      gl.ang += gl.speed;
-      gl.flick += 0.07;
+      gl.ang += gl.speed * f;
+      gl.flick += 0.07 * f;
       const c = Math.cos(gl.ang) * gl.r, s = Math.sin(gl.ang) * gl.r;
       gl.spr.position.set(
         gl.u.x * c + gl.v.x * s,
@@ -632,7 +634,7 @@ export class SphereRenderer {
       const col = this.fxSparkColor.array as Float32Array;
       for (let i = 0; i < this.fxSparkData.length; i++) {
         const sp = this.fxSparkData[i];
-        sp.ang += sp.speed; sp.tw += 0.05;
+        sp.ang += sp.speed * f; sp.tw += 0.05 * f;
         const c = Math.cos(sp.ang) * sp.r, s = Math.sin(sp.ang) * sp.r;
         const x = sp.u.x * c + sp.v.x * s;
         const y = sp.u.y * c + sp.v.y * s;
@@ -655,9 +657,13 @@ export class SphereRenderer {
       if (now - this._lastFrameAt < this._frameInterval) return;
       this._lastFrameAt = now;
     }
-    this.hoverPhase += 0.05;
+    // Delta-time in 60fps-frame units (see renderer.ts) + void-rig sleep while
+    // it is invisible at play framing; reduced-motion keeps it off entirely.
+    const f = this._lastT > 0 ? Math.min(3, (now - this._lastT) / (1000 / 60)) : 1;
+    this._lastT = now;
+    this.hoverPhase += 0.05 * f;
     this.controls.update();
-    this.updateVoidFX();
+    if (!REDUCED_MOTION && this.camera.position.length() > this.radius * 4.4) this.updateVoidFX(f);
 
     // Hover ghost
     const node = this.interactive ? this.pickNode() : null;
@@ -684,7 +690,7 @@ export class SphereRenderer {
 
     // Capture shrink animations
     for (let i = this.captureAnims.length - 1; i >= 0; i--) {
-      const a = this.captureAnims[i]; a.life++;
+      const a = this.captureAnims[i]; a.life += f;
       const t = a.life / 18;
       a.mesh.scale.setScalar(Math.max(0.001, 1 - t));
       (a.mesh.material as THREE.MeshPhysicalMaterial).opacity = 1 - t;
@@ -696,7 +702,7 @@ export class SphereRenderer {
     }
 
     for (let i = this.rejectAnims.length - 1; i >= 0; i--) {
-      const a = this.rejectAnims[i]; a.life++;
+      const a = this.rejectAnims[i]; a.life += f;
       const t = a.life / 22;
       a.mesh.scale.setScalar(1 + t * 1.5);
       const mat = a.mesh.material as THREE.MeshBasicMaterial;

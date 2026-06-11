@@ -84,6 +84,7 @@ export class MusicSystem {
   enterGame(): void {
     this.mountToggle();
     if (this.toggleEl) this.toggleEl.style.display = '';
+    if (this.sfxEl) this.sfxEl.style.display = '';
     if (this.enabled) this.start();
   }
 
@@ -91,6 +92,7 @@ export class MusicSystem {
   leaveGame(): void {
     this.stop();
     if (this.toggleEl) this.toggleEl.style.display = 'none';
+    if (this.sfxEl) this.sfxEl.style.display = 'none';
   }
 
   // ── Audio graph ────────────────────────────────────────────────────────────
@@ -276,6 +278,42 @@ export class MusicSystem {
     document.body.appendChild(b);
     this.toggleEl = b;
     this.syncToggle();
+    this.mountSfxToggle();
+  }
+
+  /** Companion button: mutes the gameplay SOUND EFFECTS (placement, captures)
+   *  independently of the music. SoundSystem reads the same localStorage key. */
+  private sfxEl: HTMLButtonElement | null = null;
+  private mountSfxToggle(): void {
+    if (this.sfxEl) return;
+    const b = document.createElement('button');
+    b.id = 'go3d-sfx-toggle';
+    b.type = 'button';
+    b.setAttribute('aria-label', 'Toggle sound effects');
+    Object.assign(b.style, {
+      position: 'fixed', left: '62px', bottom: '16px', zIndex: '9999',
+      width: '40px', height: '40px', padding: '0', cursor: 'pointer',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      font: '15px/1 ui-monospace, "SF Mono", Menlo, monospace',
+      background: 'rgba(5,8,14,0.72)', borderRadius: '8px',
+      backdropFilter: 'blur(4px)', transition: 'all .15s ease',
+    } as Partial<CSSStyleDeclaration>);
+    const sync = () => {
+      const on = localStorage.getItem('go3d_sfx') !== 'off';
+      b.textContent = on ? 'fx' : 'fx̸';
+      b.style.color = on ? '#00e5ff' : '#56606f';
+      b.style.border = `1px solid ${on ? 'rgba(0,229,255,0.55)' : 'rgba(120,130,150,0.45)'}`;
+      b.style.boxShadow = on ? '0 0 12px rgba(0,229,255,0.25)' : 'none';
+      b.title = on ? 'Sound effects on — click to mute' : 'Sound effects off — click to enable';
+    };
+    b.addEventListener('click', () => {
+      const on = localStorage.getItem('go3d_sfx') !== 'off';
+      try { localStorage.setItem('go3d_sfx', on ? 'off' : 'on'); } catch { /* ignore */ }
+      sync();
+    });
+    document.body.appendChild(b);
+    this.sfxEl = b;
+    sync();
   }
 
   private syncToggle(): void {

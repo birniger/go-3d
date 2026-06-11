@@ -10,8 +10,8 @@
  *   - standalone.ts → GitHub Pages (local hot-seat only)
  */
 
-import { AuthState } from './auth';
-import { Users, GameState, MovePayload, GameOverPayload, PlayerJoinedPayload, SphereGeometry, UndoRequestPayload } from './api';
+import { AuthState, apiErrorMessage } from './auth';
+import { Users, Games, GameState, MovePayload, GameOverPayload, PlayerJoinedPayload, SphereGeometry, UndoRequestPayload } from './api';
 import { Go3D } from './game';
 import { Renderer } from './renderer';
 import { SphereRenderer } from './sphere-renderer';
@@ -143,6 +143,8 @@ function resetViewControls(): void {
   setConnectionStatus('local');
   setCaptureCounts(0, 0);
   setActiveGlow(1, true);
+  setTurnTitle(false);
+  document.getElementById('go3d-gameover-panel')?.remove();
 }
 
 function setConnectionStatus(status: ConnectionStatus): void {
@@ -156,6 +158,132 @@ function setConnectionStatus(status: ConnectionStatus): void {
   };
   el.textContent = labels[status];
   el.className = `go3d-connection-chip go3d-connection-${status}`;
+}
+
+// ── Tab-title turn indicator + turn flash ───────────────────────────────────
+const BASE_TITLE = document.title;
+function setTurnTitle(myTurn: boolean): void {
+  document.title = myTurn ? `\u25CF Your move — ${BASE_TITLE}` : BASE_TITLE;
+}
+
+let wasMyTurn = false;
+/** One-shot cyan pulse on the turn label the moment it becomes your move. */
+function flashTurnLabel(myTurn: boolean): void {
+  if (myTurn && !wasMyTurn) {
+    const el = document.getElementById('go3d-turn-indicator');
+    if (el) {
+      el.classList.remove('go3d-turn-flash');
+      void (el as HTMLElement).offsetWidth;
+      el.classList.add('go3d-turn-flash');
+    }
+  }
+  wasMyTurn = myTurn;
+}
+
+// ── Game-over panel ──────────────────────────────────────────────────────────
+interface GameOverPanelOpts {
+  title:   string;
+  accent:  string;
+  reason?: string;
+  p1Name:  string; p2Name: string;
+  p1Score: number | null; p2Score: number | null;
+  eloP1?:  number | null; eloP2?: number | null;
+  onRematch?: () => void;
+  onExit:  () => void;
+}
+
+/** The result deserves more than a toast: verdict, score, ELO deltas, and the
+ *  next actions (rematch / review the final position / back to the lobby).
+ *  Inline-styled like modal.ts so it renders in both builds. */
+function showGameOverPanel(o: GameOverPanelOpts): void {
+  document.getElementById('go3d-gameover-panel')?.remove();
+  const wrap = document.createElement('div');
+  wrap.id = 'go3d-gameover-panel';
+  Object.assign(wrap.style, {
+    position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+    zIndex: '99999', minWidth: '300px', maxWidth: 'calc(100vw - 40px)',
+    background: 'rgba(8,12,20,0.96)', color: '#dfe8f2', padding: '22px 24px 18px',
+    border: `1px solid ${o.accent}66`, borderRadius: '12px',
+    boxShadow: `0 0 34px ${o.accent}33`,
+    font: '14px/1.5 ui-monospace, "SF Mono", Menlo, monospace',
+  } as Partial<CSSStyleDeclaration>);
+
+  const h = document.createElement('div');
+  h.textContent = o.title;
+  Object.assign(h.style, {
+    color: o.accent, fontSize: '18px', letterSpacing: '0.12em',
+    textTransform: 'uppercase', marginBottom: '2px', fontWeight: '700',
+  } as Partial<CSSStyleDeclaration>);
+  wrap.appendChild(h);
+
+  if (o.reason) {
+    const r = document.createElement('div');
+    r.textContent = o.reason;
+    Object.assign(r.style, { color: '#6b7689', fontSize: '12px', marginBottom: '10px' } as Partial<CSSStyleDeclaration>);
+    wrap.appendChild(r);
+  }
+
+  if (o.p1Score !== null && o.p2Score !== null) {
+    const score = document.createElement('div');
+    Object.assign(score.style, { display: 'flex', gap: '18px', margin: '10px 0 4px' } as Partial<CSSStyleDeclaration>);
+    const side = (name: string, pts: number, stone: string, border: string) => {
+      const d = document.createElement('div');
+      const dot = document.createElement('span');
+      Object.assign(dot.style, {
+        display: 'inline-block', width: '11px', height: '11px', borderRadius: '50%',
+        background: stone, border: `1px solid ${border}`, marginRight: '6px',
+      } as Partial<CSSStyleDeclaration>);
+      const label = document.createElement('span');
+      label.textContent = `${name} ${pts}`;
+      d.append(dot, label);
+      return d;
+    };
+    score.append(
+      side(o.p1Name, o.p1Score, '#0a0c12', 'rgba(0,229,255,0.8)'),
+      side(o.p2Name, o.p2Score, '#e8eef6', 'rgba(232,238,246,0.4)'),
+    );
+    wrap.appendChild(score);
+  }
+
+  if ((o.eloP1 ?? null) !== null || (o.eloP2 ?? null) !== null) {
+    const elo = document.createElement('div');
+    Object.assign(elo.style, { display: 'flex', gap: '8px', margin: '8px 0 4px', fontSize: '12px', flexWrap: 'wrap' } as Partial<CSSStyleDeclaration>);
+    const chip = (name: string, d: number) => {
+      const c = document.createElement('span');
+      const up = d >= 0;
+      c.textContent = `${name} ${up ? '+' : ''}${d} ELO`;
+      Object.assign(c.style, {
+        border: `1px solid ${up ? '#19f5a0' : '#ff3b6b'}`,
+        color: up ? '#19f5a0' : '#ff7b94', borderRadius: '10px', padding: '2px 9px',
+      } as Partial<CSSStyleDeclaration>);
+      return c;
+    };
+    if ((o.eloP1 ?? null) !== null) elo.appendChild(chip(o.p1Name, o.eloP1 as number));
+    if ((o.eloP2 ?? null) !== null) elo.appendChild(chip(o.p2Name, o.eloP2 as number));
+    wrap.appendChild(elo);
+  }
+
+  const row = document.createElement('div');
+  Object.assign(row.style, { display: 'flex', gap: '8px', marginTop: '14px', flexWrap: 'wrap' } as Partial<CSSStyleDeclaration>);
+  const btn = (label: string, primary: boolean, fn: () => void) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    Object.assign(b.style, {
+      padding: '8px 16px', cursor: 'pointer', borderRadius: '8px', font: 'inherit', fontSize: '13px',
+      color: primary ? '#02121a' : '#9fb0c4',
+      background: primary ? o.accent : 'transparent',
+      border: primary ? `1px solid ${o.accent}` : '1px solid rgba(120,135,160,0.4)',
+      fontWeight: primary ? '600' : '400',
+    } as Partial<CSSStyleDeclaration>);
+    b.onclick = fn;
+    return b;
+  };
+  if (o.onRematch) row.appendChild(btn('Rematch', true, () => { o.onRematch!(); wrap.remove(); }));
+  row.appendChild(btn('Review board', !o.onRematch, () => wrap.remove()));
+  row.appendChild(btn('Lobby', false, () => { wrap.remove(); o.onExit(); }));
+  wrap.appendChild(row);
+
+  document.body.appendChild(wrap);
 }
 
 /** Open the help / keyboard-shortcuts overlay. */
@@ -298,6 +426,7 @@ export class GameSession {
     private onExit: () => void,
     makeController: ControllerFactory = serverController,
     private onReload?: (state?: GameState) => void,
+    opts: { skipIntro?: boolean } = {},
   ) {
     this.game = new Go3D(state.board_size);
 
@@ -314,7 +443,7 @@ export class GameSession {
 
     // Mount the renderer. doLocalPlace is the click handler the renderer calls
     // with board coordinates.
-    this.renderer = new Renderer(this.game, (x, y, z) => void this.doLocalPlace(x, y, z));
+    this.renderer = new Renderer(this.game, (x, y, z) => void this.doLocalPlace(x, y, z), opts);
     if (this.activeLayer !== null) this.renderer.setStackLayer(this.activeLayer);
     this.renderer.updateStones();
 
@@ -392,6 +521,26 @@ export class GameSession {
     try { await this.controller.submitResign(); } catch { /* surfaced via onError */ }
   }
 
+  /** Game-over panel action: challenge the same opponent with the same setup. */
+  private async sendRematch(): Promise<void> {
+    const me  = AuthState.user?.id;
+    const opp = this.state.player1_id === me ? this.state.player2_id : this.state.player1_id;
+    if (!opp) return;
+    try {
+      await Games.challenge(opp, {
+        board_size:   this.state.board_size,
+        mode:         this.state.mode,
+        scoring_mode: this.state.scoring_mode as string,
+        komi:         this.state.komi,
+        time_control: this.state.time_control,
+        ...(this.state.time_settings ? { time_settings: { ...this.state.time_settings } } : {}),
+      });
+      showToast('Rematch challenge sent — your opponent can accept it from the lobby.', 'success');
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    }
+  }
+
   private async doUndo(): Promise<void> {
     if (this.finished || this.state.moves.length === 0) return;
     const msg = this.isLocal
@@ -467,17 +616,21 @@ export class GameSession {
     // Local games carry a slot number (1|2) in winner_id; server games a user id.
     const myId = AuthState.user?.id ?? -1;
     const iWon = this.isLocal ? false : p.winner_id === myId;
-    let msg: string;
-    if (p.winner_id === null)   msg = 'Game over — draw.';
-    else if (this.isLocal)      msg = `${colourName(p.winner_id as 1 | 2)} wins!`;
-    else if (iWon)              msg = 'You won!';
-    else                        msg = 'You lost.';
-
-    const reason = p.end_reason ? ` (${p.end_reason.replace(/_/g, ' ')})` : '';
-    if (p.p1_score !== null && p.p2_score !== null) {
-      msg += `  Score — Black ${p.p1_score} : White ${p.p2_score}.`;
-    }
-    showToast(msg + reason, (this.isLocal || iWon) ? 'success' : 'info');
+    const title = p.winner_id === null ? 'Draw'
+      : this.isLocal ? `${colourName(p.winner_id as 1 | 2)} wins`
+      : iWon ? 'Victory' : 'Defeat';
+    const accent = p.winner_id === null ? '#00e5ff' : (this.isLocal || iWon) ? '#19f5a0' : '#ff3b6b';
+    setTurnTitle(false);
+    showGameOverPanel({
+      title, accent,
+      reason: p.end_reason ? p.end_reason.replace(/_/g, ' ') : undefined,
+      p1Name: this.state.player1_name || 'Black',
+      p2Name: this.state.player2_name || 'White',
+      p1Score: p.p1_score, p2Score: p.p2_score,
+      eloP1: p.elo_change_p1, eloP2: p.elo_change_p2,
+      onRematch: (!this.isLocal && this.state.player2_id) ? () => void this.sendRematch() : undefined,
+      onExit: () => void this.exit(),
+    });
 
     const ind = document.getElementById('go3d-turn-indicator');
     if (ind) ind.textContent = 'Game over';
@@ -833,6 +986,8 @@ export class GameSession {
 
     const myTurn  = this.currentTurn === this.mySlot;
     const waiting = this.state.status !== 'active';
+    setTurnTitle(myTurn && !waiting);
+    flashTurnLabel(myTurn && !waiting);
 
     const ind = document.getElementById('go3d-turn-indicator');
     if (ind) ind.textContent = waiting ? 'Waiting for opponent…' : (myTurn ? 'Your move' : "Opponent's move");
@@ -1044,6 +1199,26 @@ export class SphereGameSession {
     try { await this.controller.submitResign(); } catch { /* surfaced via onError */ }
   }
 
+  /** Game-over panel action: challenge the same opponent with the same setup. */
+  private async sendRematch(): Promise<void> {
+    const me  = AuthState.user?.id;
+    const opp = this.state.player1_id === me ? this.state.player2_id : this.state.player1_id;
+    if (!opp) return;
+    try {
+      await Games.challenge(opp, {
+        board_size:   this.state.board_size,
+        mode:         this.state.mode,
+        scoring_mode: this.state.scoring_mode as string,
+        komi:         this.state.komi,
+        time_control: this.state.time_control,
+        ...(this.state.time_settings ? { time_settings: { ...this.state.time_settings } } : {}),
+      });
+      showToast('Rematch challenge sent — your opponent can accept it from the lobby.', 'success');
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    }
+  }
+
   private async doUndo(): Promise<void> {
     if (this.finished || this.state.moves.length === 0) return;
     const msg = this.isLocal
@@ -1100,17 +1275,21 @@ export class SphereGameSession {
     // Local games carry a slot number (1|2) in winner_id; server games a user id.
     const myId = AuthState.user?.id ?? -1;
     const iWon = this.isLocal ? false : p.winner_id === myId;
-    let msg: string;
-    if (p.winner_id === null)   msg = 'Game over — draw.';
-    else if (this.isLocal)      msg = `${colourName(p.winner_id as 1 | 2)} wins!`;
-    else if (iWon)              msg = 'You won!';
-    else                        msg = 'You lost.';
-
-    const reason = p.end_reason ? ` (${p.end_reason.replace(/_/g, ' ')})` : '';
-    if (p.p1_score !== null && p.p2_score !== null) {
-      msg += `  Score — Black ${p.p1_score} : White ${p.p2_score}.`;
-    }
-    showToast(msg + reason, (this.isLocal || iWon) ? 'success' : 'info');
+    const title = p.winner_id === null ? 'Draw'
+      : this.isLocal ? `${colourName(p.winner_id as 1 | 2)} wins`
+      : iWon ? 'Victory' : 'Defeat';
+    const accent = p.winner_id === null ? '#00e5ff' : (this.isLocal || iWon) ? '#19f5a0' : '#ff3b6b';
+    setTurnTitle(false);
+    showGameOverPanel({
+      title, accent,
+      reason: p.end_reason ? p.end_reason.replace(/_/g, ' ') : undefined,
+      p1Name: this.state.player1_name || 'Black',
+      p2Name: this.state.player2_name || 'White',
+      p1Score: p.p1_score, p2Score: p.p2_score,
+      eloP1: p.elo_change_p1, eloP2: p.elo_change_p2,
+      onRematch: (!this.isLocal && this.state.player2_id) ? () => void this.sendRematch() : undefined,
+      onExit: () => void this.exit(),
+    });
 
     const ind = document.getElementById('go3d-turn-indicator');
     if (ind) ind.textContent = 'Game over';
@@ -1242,6 +1421,8 @@ export class SphereGameSession {
 
     const myTurn  = this.currentTurn === this.mySlot;
     const waiting = this.state.status !== 'active';
+    setTurnTitle(myTurn && !waiting);
+    flashTurnLabel(myTurn && !waiting);
     const ind = document.getElementById('go3d-turn-indicator');
     if (ind) ind.textContent = waiting ? 'Waiting for opponent…' : (myTurn ? 'Your move' : "Opponent's move");
     const overlay = document.getElementById('go3d-waiting-overlay');

@@ -80,7 +80,7 @@ class App {
     }
   }
 
-  private async enterGame(gameId: number, preloaded?: Awaited<ReturnType<typeof Games.get>>): Promise<void> {
+  private async enterGame(gameId: number, preloaded?: Awaited<ReturnType<typeof Games.get>>, skipIntro = false): Promise<void> {
     // Switch to the game screen immediately so the canvas has somewhere to live.
     document.querySelectorAll<HTMLElement>('.go3d-screen').forEach(el => {
       el.style.display = el.id === 'go3d-game-screen' ? '' : 'none';
@@ -89,10 +89,11 @@ class App {
     try {
       const state = preloaded ?? await Games.get(gameId);
       const onExit = () => { this.session = null; void this.lobby.showLobby(); };
-      const onReload = (next?: typeof state) => { void this.enterGame(gameId, next); };
+      // Reloads (accepted undos) re-enter the same game — skip the intro orbit.
+      const onReload = (next?: typeof state) => { void this.enterGame(gameId, next, true); };
       this.session = state.mode === 'sphere'
         ? new SphereGameSession(state, onExit, undefined, onReload)
-        : new GameSession(state, onExit, undefined, onReload);
+        : new GameSession(state, onExit, undefined, onReload, { skipIntro });
     } catch {
       showToast('Could not load that game.', 'error');
       void this.lobby.showLobby();
