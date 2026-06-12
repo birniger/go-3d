@@ -217,14 +217,30 @@ export class Renderer {
   private _vh = window.innerHeight;
   private ringPalette = [0x00e5ff, 0xff0077, 0x1affa0];
 
-  // ── Megacity void (1.5.0): rain, skyline, smog horizon, adboards, traffic ──
+  // ── Megacity void: one group, composed in horizontal depth bands ──────────
+  private city: THREE.Group | null = null;
+  private RAIN_N = 420;
   private rainVel!:  Float32Array;
   private rainPos!:  THREE.BufferAttribute;
-  private towers:    THREE.InstancedMesh | null = null;
-  private towerMat:  THREE.MeshBasicMaterial | null = null;
-  private smog:      THREE.Mesh | null = null;
+  private rainMat:   THREE.LineBasicMaterial | null = null;
+  private rain:      THREE.LineSegments | null = null;
+  private towerMats: { mat: THREE.MeshBasicMaterial; alpha: number }[] = [];
   private smogMat:   THREE.MeshBasicMaterial | null = null;
+  private groundMat: THREE.MeshBasicMaterial | null = null;
   private adboards:  { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; flick: number; speed: number }[] = [];
+  // Uplink beam: the construct's visible anchor to the city below.
+  private beamMat:   THREE.MeshBasicMaterial | null = null;
+  private beamPulse = 0;
+  private padMat:    THREE.MeshBasicMaterial | null = null;
+  private motePos:   THREE.BufferAttribute | null = null;
+  private moteVel!:  Float32Array;
+  private moteMat:   THREE.PointsMaterial | null = null;
+  // Rooftop aviation beacons (slow asynchronous red blink) + searchlights.
+  private beaconAttr: THREE.BufferAttribute | null = null;
+  private beaconPhase!: Float32Array;
+  private beaconMat: THREE.PointsMaterial | null = null;
+  private _beaconT = 0;
+  private searchlights: { pivot: THREE.Group; speed: number }[] = [];
   // Music-synced glow (beat bus) + connection-loss dimming.
   private _beatGlow   = 0;
   private _signalLost = false;
@@ -562,93 +578,249 @@ export class Renderer {
 
   // ── Particles ─────────────────────────────────────────────────────────────
   private initParticles() {
-    // Neon rain (cyberpunk weather, replaces the old space dust): columns of
-    // falling points in an annulus around the play volume — never inside it.
-    const n = 600, pos = new Float32Array(n * 3), r = this.game.size * 5;
-    const guard = ((this.game.size - 1) / 2) * 2.1;
+    // Rain as MOTION STREAKS: each drop is a short wind-slanted line segment
+    // (head bright, tail dim) falling fast — reads as weather, not noise. The
+    // whole layer is reveal-gated: clean board at play framing, rain in the
+    // city view. Drops live in an annulus outside the play volume.
+    const n = this.RAIN_N, r = this.game.size * 6;
+    const guard = ((this.game.size - 1) / 2) * 2.4;
+    const pos = new Float32Array(n * 6);
+    const col = new Float32Array(n * 6);
     this.rainVel = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * Math.PI * 2;
       const rad = guard + Math.random() * r;
-      pos[i*3]   = Math.cos(ang) * rad;
-      pos[i*3+1] = (Math.random() - 0.5) * 2 * r;
-      pos[i*3+2] = Math.sin(ang) * rad;
-      this.rainVel[i] = 0.10 + Math.random() * 0.16;
+      const x = Math.cos(ang) * rad, z = Math.sin(ang) * rad;
+      const y = (Math.random() - 0.5) * 2 * r;
+      const v = 0.34 + Math.random() * 0.30;          // fast — rain, not snow
+      const len = v * 5.5;
+      this.rainVel[i] = v;
+      // Shared wind slant (0.18, -1, 0.10): tail sits up-wind of the head.
+      pos[i*6]   = x;               pos[i*6+1] = y;        pos[i*6+2] = z;
+      pos[i*6+3] = x + 0.18 * len;  pos[i*6+4] = y + len;  pos[i*6+5] = z + 0.10 * len;
+      col[i*6]   = 0.62; col[i*6+1] = 0.85; col[i*6+2] = 0.95;   // head
+      col[i*6+3] = 0.06; col[i*6+4] = 0.10; col[i*6+5] = 0.12;   // tail
     }
     const geo = new THREE.BufferGeometry();
     this.rainPos = new THREE.Float32BufferAttribute(pos, 3) as THREE.BufferAttribute;
     this.rainPos.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('position', this.rainPos);
-    this.particles = new THREE.Points(geo,
-      new THREE.PointsMaterial({ color: 0x2a4a55, size: 0.055, transparent: true, opacity: 0.5 }));
-    this.scene.add(this.particles);
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    this.rainMat = new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.rain = new THREE.LineSegments(geo, this.rainMat);
+    this.rain.frustumCulled = false;
+    this.scene.add(this.rain);
+    // Keep the legacy field pointing at something harmless.
+    this.particles = this.rain as unknown as THREE.Points;
   }
 
-  /** Skyline towers + smog horizon + holographic adboards, all fxReveal-gated. */
+  /** The megacity: composed in horizontal depth bands with a clear value
+   *  hierarchy — near towers (lit windows) → mid (dim) → far silhouettes
+   *  against the smog. A vertical UPLINK BEAM anchors the construct to the
+   *  city (rising data motes, glowing landing pad), rooftop beacons blink
+   *  asynchronously, and two searchlights sweep the sky. Everything lives in
+   *  one group, reveal-gated and hard-culled while you play. */
   private initCityVoid() {
     const size = this.game.size;
     const floorY = -size * 2.8;
+    const city = new THREE.Group();
+    this.city = city;
 
-    // — Towers: one instanced box, lit-window canvas texture shared by all —
+    // — Shared lit-window texture —
     const wc = document.createElement('canvas'); wc.width = 64; wc.height = 128;
     const wg = wc.getContext('2d')!;
     wg.fillStyle = '#04060c'; wg.fillRect(0, 0, 64, 128);
     for (let y = 6; y < 122; y += 7) {
       for (let x = 5; x < 57; x += 9) {
-        if (Math.random() < 0.30) {
-          wg.fillStyle = Math.random() < 0.78 ? 'rgba(0,229,255,0.75)' : 'rgba(255,170,60,0.8)';
+        if (Math.random() < 0.28) {
+          wg.fillStyle = Math.random() < 0.78 ? 'rgba(0,229,255,0.7)' : 'rgba(255,170,60,0.75)';
           wg.fillRect(x, y, 4, 3);
         }
       }
     }
     const wtex = new THREE.CanvasTexture(wc);
-    this.towerMat = new THREE.MeshBasicMaterial({ map: wtex, transparent: true, opacity: 0, depthWrite: false });
-    const TOWER_N = 46;
-    this.towers = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), this.towerMat, TOWER_N);
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < TOWER_N; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const rad = size * (7 + Math.random() * 5);
-      const h   = size * (1.6 + Math.random() * 3.2);
-      const w   = size * (0.5 + Math.random() * 0.7);
-      dummy.position.set(Math.cos(ang) * rad, floorY + h / 2, Math.sin(ang) * rad);
-      dummy.scale.set(w, h, w);
-      dummy.rotation.y = Math.random() * Math.PI;
-      dummy.updateMatrix();
-      this.towers.setMatrixAt(i, dummy.matrix);
-    }
-    this.scene.add(this.towers);
 
-    // — Smog horizon: inward-facing cylinder with a sodium-orange gradient —
-    // the warm third colour every cyberpunk frame has, confined to the far void.
+    // — Towers in three depth bands (the depth cue the flat ring lacked) —
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    const dummy = new THREE.Object3D();
+    const beaconPts: number[] = [];
+    const bands = [
+      { n: 24, r0: 7.0,  r1: 9.5,  hMax: 4.6, map: wtex, tint: 0xffffff, alpha: 0.95 },
+      { n: 32, r0: 10.5, r1: 13.5, hMax: 3.6, map: wtex, tint: 0x55687a, alpha: 0.6 },
+      { n: 30, r0: 14.5, r1: 18.5, hMax: 2.8, map: null, tint: 0x05070d, alpha: 0.95 },
+    ];
+    for (const b of bands) {
+      const params: THREE.MeshBasicMaterialParameters =
+        { color: b.tint, transparent: true, opacity: 0, depthWrite: false };
+      if (b.map) params.map = b.map;
+      const mat = new THREE.MeshBasicMaterial(params);
+      const inst = new THREE.InstancedMesh(box, mat, b.n);
+      for (let i = 0; i < b.n; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const rad = size * (b.r0 + Math.random() * (b.r1 - b.r0));
+        const spire = Math.random() < 0.3;
+        const h = size * (spire ? 1.2 + Math.random() * b.hMax : 1.4 + Math.random() * (b.hMax * 0.7));
+        const w = size * (spire ? 0.35 + Math.random() * 0.3 : 0.7 + Math.random() * 0.9);
+        dummy.position.set(Math.cos(ang) * rad, floorY + h / 2, Math.sin(ang) * rad);
+        dummy.scale.set(w, h, w);
+        dummy.rotation.set(0, Math.random() * Math.PI, 0);
+        dummy.updateMatrix();
+        inst.setMatrixAt(i, dummy.matrix);
+        // The tallest near/mid towers get a red aviation beacon on the roof.
+        if (b.map && h > size * 2.6 && beaconPts.length < 14 * 3) {
+          beaconPts.push(dummy.position.x, floorY + h + size * 0.05, dummy.position.z);
+        }
+      }
+      city.add(inst);
+      this.towerMats.push({ mat, alpha: b.alpha });
+    }
+
+    // — Rooftop beacons: slow asynchronous red blink (instantly "city at night") —
+    if (beaconPts.length) {
+      const n = beaconPts.length / 3;
+      this.beaconPhase = new Float32Array(n);
+      for (let i = 0; i < n; i++) this.beaconPhase[i] = Math.random() * Math.PI * 2;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(beaconPts, 3));
+      this.beaconAttr = new THREE.BufferAttribute(new Float32Array(n * 3), 3);
+      this.beaconAttr.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('color', this.beaconAttr);
+      this.beaconMat = new THREE.PointsMaterial({
+        size: size * 0.07, vertexColors: true, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const pts = new THREE.Points(geo, this.beaconMat);
+      pts.frustumCulled = false;
+      city.add(pts);
+    }
+
+    // — Ground: a vast dark disc so the city stands on something —
+    {
+      const gc = document.createElement('canvas'); gc.width = 128; gc.height = 128;
+      const gg = gc.getContext('2d')!;
+      const grad = gg.createRadialGradient(64, 64, 6, 64, 64, 64);
+      grad.addColorStop(0, '#0a1018');
+      grad.addColorStop(0.5, '#05080e');
+      grad.addColorStop(1, 'rgba(3,5,9,0)');
+      gg.fillStyle = grad; gg.fillRect(0, 0, 128, 128);
+      this.groundMat = new THREE.MeshBasicMaterial({
+        map: new THREE.CanvasTexture(gc), transparent: true, opacity: 0, depthWrite: false,
+      });
+      const ground = new THREE.Mesh(new THREE.CircleGeometry(size * 20, 48), this.groundMat);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = floorY - 0.05;
+      city.add(ground);
+    }
+
+    // — Smog horizon: sodium-orange band the far silhouettes read against —
     const sc = document.createElement('canvas'); sc.width = 4; sc.height = 128;
     const sg = sc.getContext('2d')!;
-    const grad = sg.createLinearGradient(0, 0, 0, 128);
-    grad.addColorStop(0.0, 'rgba(194,65,12,0)');
-    grad.addColorStop(0.72, 'rgba(194,65,12,0.16)');
-    grad.addColorStop(0.94, 'rgba(255,122,24,0.42)');
-    grad.addColorStop(1.0, 'rgba(255,140,40,0.5)');
-    sg.fillStyle = grad; sg.fillRect(0, 0, 4, 128);
-    const stex = new THREE.CanvasTexture(sc);
+    const sgrad = sg.createLinearGradient(0, 0, 0, 128);
+    sgrad.addColorStop(0.0, 'rgba(194,65,12,0)');
+    sgrad.addColorStop(0.66, 'rgba(194,65,12,0.18)');
+    sgrad.addColorStop(0.92, 'rgba(255,122,24,0.46)');
+    sgrad.addColorStop(1.0, 'rgba(255,140,40,0.55)');
+    sg.fillStyle = sgrad; sg.fillRect(0, 0, 4, 128);
     this.smogMat = new THREE.MeshBasicMaterial({
-      map: stex, transparent: true, opacity: 0, side: THREE.BackSide,
+      map: new THREE.CanvasTexture(sc), transparent: true, opacity: 0, side: THREE.BackSide,
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
-    this.smog = new THREE.Mesh(
-      new THREE.CylinderGeometry(size * 13, size * 13, size * 5, 36, 1, true), this.smogMat);
-    this.smog.position.y = floorY + size * 1.6;
-    this.scene.add(this.smog);
+    const smog = new THREE.Mesh(
+      new THREE.CylinderGeometry(size * 19, size * 19, size * 6, 36, 1, true), this.smogMat);
+    smog.position.y = floorY + size * 2.2;
+    city.add(smog);
 
-    // — Holographic adboards: invented Go-megacorp signage, occasional glitch —
-    const ADS: [string, string, string][] = [
-      ['白石電気', 'SHIROISHI ELECTRIC', '#00e5ff'],
-      ['天元重工', 'TENGEN HEAVY IND.', '#ff0077'],
-      ['コミ 6.5', 'KOMI SYNTHETICS', '#19f5a0'],
+    // — Uplink beam: the construct's anchor. Without it the board floats
+    //   arbitrarily; with it, the city is visibly computing the game. —
+    {
+      const bc = document.createElement('canvas'); bc.width = 4; bc.height = 128;
+      const bg = bc.getContext('2d')!;
+      const bgrad = bg.createLinearGradient(0, 0, 0, 128);
+      bgrad.addColorStop(0.0, 'rgba(0,229,255,0.0)');
+      bgrad.addColorStop(0.15, 'rgba(0,229,255,0.5)');
+      bgrad.addColorStop(0.8, 'rgba(0,229,255,0.22)');
+      bgrad.addColorStop(1.0, 'rgba(0,229,255,0.45)');
+      bg.fillStyle = bgrad; bg.fillRect(0, 0, 4, 128);
+      const ext = (size - 1) / 2;
+      const top = -ext * 1.35, h = top - floorY;
+      this.beamMat = new THREE.MeshBasicMaterial({
+        map: new THREE.CanvasTexture(bc), transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(size * 0.34, size * 0.62, h, 24, 1, true), this.beamMat);
+      beam.position.y = top - h / 2;
+      city.add(beam);
+
+      // Landing pad: a flat glowing ring where the beam meets the ground.
+      this.padMat = new THREE.MeshBasicMaterial({
+        color: 0x00e5ff, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const pad = new THREE.Mesh(new THREE.RingGeometry(size * 0.55, size * 0.78, 40), this.padMat);
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.y = floorY + 0.06;
+      city.add(pad);
+
+      // Data motes streaming UP the beam — the game flowing into the construct.
+      const MOTE_N = 36;
+      const mp = new Float32Array(MOTE_N * 3);
+      this.moteVel = new Float32Array(MOTE_N);
+      for (let i = 0; i < MOTE_N; i++) {
+        const a = Math.random() * Math.PI * 2, rr = Math.random() * size * 0.3;
+        mp[i*3] = Math.cos(a) * rr;
+        mp[i*3+1] = floorY + Math.random() * h;
+        mp[i*3+2] = Math.sin(a) * rr;
+        this.moteVel[i] = 0.045 + Math.random() * 0.075;
+      }
+      const mg = new THREE.BufferGeometry();
+      this.motePos = new THREE.Float32BufferAttribute(mp, 3) as THREE.BufferAttribute;
+      this.motePos.setUsage(THREE.DynamicDrawUsage);
+      mg.setAttribute('position', this.motePos);
+      this.moteMat = new THREE.PointsMaterial({
+        color: 0x9ff4ff, size: size * 0.05, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const motes = new THREE.Points(mg, this.moteMat);
+      motes.frustumCulled = false;
+      city.add(motes);
+    }
+
+    // — Searchlights: two slow cones sweeping the smog (sky activity) —
+    for (let i = 0; i < 2; i++) {
+      const pivot = new THREE.Group();
+      const ang = i === 0 ? 1.1 : 4.0;
+      const rad = size * (11 + i * 3);
+      pivot.position.set(Math.cos(ang) * rad, floorY, Math.sin(ang) * rad);
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(size * 1.5, size * 8, 16, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: 0xbfe8ff, transparent: true, opacity: 0.045,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+        }));
+      cone.position.y = size * 4;       // apex at the pivot (ground), bowl up
+      cone.rotation.x = 0;
+      const tilt = new THREE.Group();
+      tilt.rotation.z = 0.42;           // lean the beam off vertical
+      tilt.add(cone);
+      pivot.add(tilt);
+      city.add(pivot);
+      this.searchlights.push({ pivot, speed: (i === 0 ? 1 : -1) * (0.0035 + i * 0.0015) });
+    }
+
+    // — Adboards: pulled in tight against the near band, facing the construct —
+    const ADS: [string, string, string, number][] = [
+      ['白石電気', 'SHIROISHI ELECTRIC', '#00e5ff', 1.0],
+      ['天元重工', 'TENGEN HEAVY IND.', '#ff0077', 1.5],
+      ['コミ 6.5', 'KOMI SYNTHETICS', '#19f5a0', 0.85],
     ];
-    ADS.forEach(([kanji, latin, hex], i) => {
+    ADS.forEach(([kanji, latin, hex, scale], i) => {
       const ac = document.createElement('canvas'); ac.width = 256; ac.height = 128;
       const ag = ac.getContext('2d')!;
-      ag.fillStyle = 'rgba(4,8,14,0.92)'; ag.fillRect(0, 0, 256, 128);
+      ag.fillStyle = 'rgba(4,8,14,0.94)'; ag.fillRect(0, 0, 256, 128);
       ag.strokeStyle = hex; ag.lineWidth = 3; ag.strokeRect(4, 4, 248, 120);
       ag.fillStyle = hex; ag.font = 'bold 44px sans-serif'; ag.textAlign = 'center';
       ag.fillText(kanji, 128, 62);
@@ -658,14 +830,17 @@ export class Renderer {
       const mat = new THREE.MeshBasicMaterial({
         map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
       });
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size * 2.4, size * 1.2), mat);
-      const ang = (i / ADS.length) * Math.PI * 2 + 0.7;
-      const rad = size * (5.6 + i * 0.9);
-      mesh.position.set(Math.cos(ang) * rad, size * (-0.6 + i * 0.9), Math.sin(ang) * rad);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size * 2.2 * scale, size * 1.1 * scale), mat);
+      const ang = (i / ADS.length) * Math.PI * 2 + 0.9;
+      const rad = size * 6.9;
+      mesh.position.set(Math.cos(ang) * rad, size * (-1.5 + i * 1.0), Math.sin(ang) * rad);
       mesh.lookAt(0, mesh.position.y, 0);
-      this.scene.add(mesh);
+      city.add(mesh);
       this.adboards.push({ mesh, mat, flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05 });
     });
+
+    city.visible = false;            // hard-culled until the reveal wakes it
+    this.scene.add(city);
   }
 
   // An exterior "containment rig" orbiting the play volume. A keep-out sphere
@@ -694,10 +869,11 @@ export class Renderer {
       this.spawnStreak(i, Math.random() * 90);
     }
 
-    this.initRings();
+    // The old orbital rings + glyph satellites were "space" fiction — retired
+    // in the megacity re-theme. The cage stays as the construct's containment
+    // field; the pulse halos are now horizontal energy discharges.
     this.initPulses();
     this.initCageRunners();
-    this.initGlyphs();
   }
 
   /** Pick an orthonormal basis (u,v) for a random plane through the origin. */
@@ -958,9 +1134,8 @@ export class Renderer {
     for (const g of this.glyphs) g.spr.visible = v;
     for (const r of this.rings) r.node.visible = v;
     for (const p of this.pulses) p.mesh.visible = false;
-    if (this.towers) this.towers.visible = v;
-    if (this.smog) this.smog.visible = v;
-    for (const ad of this.adboards) ad.mesh.visible = v;
+    if (this.city) this.city.visible = v;
+    if (this.rain) this.rain.visible = v;
   }
 
   /** Connection-loss ambience: the world dims while we're reconnecting. */
@@ -980,14 +1155,48 @@ export class Renderer {
       this.fxReveal = t * t * (3 - 2 * t);            // smoothstep
     }
 
-    // — Megacity layer: skyline, smog horizon, adboards (all reveal-gated) —
-    if (this.towerMat) this.towerMat.opacity = this.fxReveal * 0.92;
-    if (this.smogMat)  this.smogMat.opacity  = this.fxReveal * 0.85;
+    // — Megacity: depth bands, uplink beam, beacons, searchlights, signage —
+    const rev = this.fxReveal;
+    if (this.city) this.city.visible = rev > 0.002;
+    for (const tb of this.towerMats) tb.mat.opacity = rev * tb.alpha;
+    if (this.smogMat)   this.smogMat.opacity   = rev * 0.9;
+    if (this.groundMat) this.groundMat.opacity = rev;
+    if (this.rainMat)   this.rainMat.opacity   = rev * 0.5;
+
+    // Uplink beam: breathes slowly, kicks on the music's bass downbeats.
+    this.beamPulse = Math.max(0, this.beamPulse - 0.025 * f);
+    if (this.beamMat) this.beamMat.opacity = rev * (0.16 + 0.05 * Math.sin(this.hoverPhase * 0.35) + 0.22 * this.beamPulse);
+    if (this.padMat)  this.padMat.opacity  = rev * (0.25 + 0.30 * this.beamPulse + 0.08 * Math.sin(this.hoverPhase * 0.7));
+    if (this.moteMat) this.moteMat.opacity = rev * 0.85;
+    if (this.motePos) {
+      const arr = this.motePos.array as Float32Array;
+      const ext = (this.game.size - 1) / 2;
+      const top = -ext * 1.35, floor = -this.game.size * 2.8;
+      for (let i = 0; i < this.moteVel.length; i++) {
+        arr[i*3+1] += this.moteVel[i] * f;
+        if (arr[i*3+1] > top) arr[i*3+1] = floor;
+      }
+      this.motePos.needsUpdate = true;
+    }
+
+    // Rooftop beacons: slow asynchronous red blink.
+    if (this.beaconAttr && this.beaconMat) {
+      this.beaconMat.opacity = rev;
+      this._beaconT += 0.045 * f;
+      const c = this.beaconAttr.array as Float32Array;
+      for (let i = 0; i < this.beaconPhase.length; i++) {
+        const b = Math.max(0, Math.sin(this._beaconT + this.beaconPhase[i]));
+        const k = b * b;
+        c[i*3] = k; c[i*3+1] = k * 0.12; c[i*3+2] = k * 0.1;
+      }
+      this.beaconAttr.needsUpdate = true;
+    }
+
+    for (const sl of this.searchlights) sl.pivot.rotation.y += sl.speed * f;
     for (const ad of this.adboards) {
       ad.flick += ad.speed * f;
       const glitch = Math.random() < 0.012 ? 0.45 : 0;
-      ad.mat.opacity = this.fxReveal * Math.max(0.12,
-        0.62 + 0.28 * Math.abs(Math.sin(ad.flick * 1.7)) - glitch);
+      ad.mat.opacity = rev * Math.max(0.12, 0.55 + 0.25 * Math.abs(Math.sin(ad.flick * 1.7)) - glitch);
     }
 
     // — Comet-streaks: rotate along the shell; trail is the prior arc point —
@@ -1037,17 +1246,17 @@ export class Renderer {
     if (this.pulseCooldown <= 0) {
       const p = this.pulses.find(q => !q.mesh.visible);
       if (p) {
-        const u = this._tmpV, v = this._tmpV2;
-        this.randomBasis(u, v);
-        // Orient the ring's local plane to (u,v).
-        const m = this._pulseMat.makeBasis(u, v, this._pulseW.crossVectors(u, v));
+        // Horizontal halo — an energy discharge in the construct's plane,
+        // consistent with the city's up-vector (no more random 3D tilts).
+        const m = this._pulseMat.makeBasis(
+          this._tmpV.set(1, 0, 0), this._tmpV2.set(0, 0, 1), this._pulseW.set(0, 1, 0));
         p.mesh.quaternion.setFromRotationMatrix(m);
-        const [pr, pg, pb] = this.hexRGB(this.ringPalette[(Math.random()*3)|0]);
+        const [pr, pg, pb] = this.hexRGB(0x00e5ff);
         p.base[0] = pr; p.base[1] = pg; p.base[2] = pb;
         p.max = 70 + Math.random()*40;
         p.life = 0; p.mesh.visible = true;
       }
-      this.pulseCooldown = 60 + (Math.random()*90|0);
+      this.pulseCooldown = 240 + (Math.random()*240|0);
     }
     void firing;
 
@@ -1792,13 +2001,20 @@ export class Renderer {
       : 0.55 + 0.35 * breathe) + 0.16 * this._beatGlow);
     (this.boundingBox.material as THREE.LineBasicMaterial).opacity = stackFade ? 0.22 : 1;
 
-    // Neon rain: fall and respawn at the top of the column.
-    if (!REDUCED_MOTION) {
+    // Rain: advance both streak vertices along the wind vector; respawn at the
+    // top once a drop reaches the city floor. Skipped entirely at play framing.
+    if (!REDUCED_MOTION && this.fxReveal > 0.002 && this.rain) {
       const arr = this.rainPos.array as Float32Array;
-      const top = this.game.size * 5, floor = -this.game.size * 5;
+      const top = this.game.size * 6, floor = -this.game.size * 3.2;
       for (let i = 0; i < this.rainVel.length; i++) {
-        arr[i*3+1] -= this.rainVel[i] * f;
-        if (arr[i*3+1] < floor) arr[i*3+1] = top;
+        const v = this.rainVel[i] * f;
+        const dx = -0.18 * v, dy = -v, dz = -0.10 * v;
+        arr[i*6]   += dx; arr[i*6+1] += dy; arr[i*6+2] += dz;
+        arr[i*6+3] += dx; arr[i*6+4] += dy; arr[i*6+5] += dz;
+        if (arr[i*6+1] < floor) {
+          const lift = top - arr[i*6+1];
+          arr[i*6+1] += lift; arr[i*6+4] += lift;
+        }
       }
       this.rainPos.needsUpdate = true;
     }
@@ -1808,7 +2024,7 @@ export class Renderer {
     while (musicBus.events.length && musicBus.events[0].at <= now) {
       const e = musicBus.events.shift()!;
       if (e.kind === 'bar')  this._beatGlow = 1;
-      else if (e.kind === 'bass') { this._beatGlow = Math.max(this._beatGlow, 0.55); this.pulseCooldown = Math.min(this.pulseCooldown, 0); }
+      else if (e.kind === 'bass') { this._beatGlow = Math.max(this._beatGlow, 0.55); this.beamPulse = 1; }
     }
     this._beatGlow = Math.max(0, this._beatGlow - 0.035 * f);
 
