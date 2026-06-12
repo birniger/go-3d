@@ -253,9 +253,8 @@ export class Renderer {
   private shipTrailPos!: Float32Array;
   private shipTrailCol!: Float32Array;
   private shipTrails: THREE.LineSegments | null = null;
-  private shipHeadAttr: THREE.BufferAttribute | null = null;
-  private shipHeadCol:  THREE.BufferAttribute | null = null;
-  private shipHeads: THREE.Points | null = null;
+  private shipGroups: { grp: THREE.Group; navA: THREE.Mesh; navB: THREE.Mesh }[] = [];
+  private shipMats: THREE.Material[] = [];   // shared, opacity driven by reveal
   // Music-synced glow (beat bus) + connection-loss dimming.
   private _beatGlow   = 0;
   private _signalLost = false;
@@ -914,9 +913,10 @@ export class Renderer {
       }
     }
 
-    // — Airships: a handful of small craft with light trails, wandering on
-    //   slowly-curving paths. Now and then one turns toward a monolith and
-    //   DOCKS — a spark flash at the hull — then re-emerges elsewhere later. —
+    // — Airships: proper little vessels, not dots. Each is a dark hull whose
+    //   LIGHT SIGNATURE does the work at distance: glowing side strips, a
+    //   bright engine block trailing a long wake, and blinking nav tips.
+    //   They wander on curving paths and occasionally dock INTO a monolith. —
     {
       const N = 7;
       this.shipTrailPos = new Float32Array(N * 6);
@@ -930,16 +930,32 @@ export class Renderer {
         blending: THREE.AdditiveBlending, depthWrite: false }));
       this.shipTrails.frustumCulled = false;
       city.add(this.shipTrails);
-      const hgeo = new THREE.BufferGeometry();
-      this.shipHeadAttr = new THREE.BufferAttribute(new Float32Array(N * 3), 3); this.shipHeadAttr.setUsage(THREE.DynamicDrawUsage);
-      this.shipHeadCol  = new THREE.BufferAttribute(new Float32Array(N * 3), 3); this.shipHeadCol.setUsage(THREE.DynamicDrawUsage);
-      hgeo.setAttribute('position', this.shipHeadAttr); hgeo.setAttribute('color', this.shipHeadCol);
-      this.shipHeads = new THREE.Points(hgeo, new THREE.PointsMaterial({
-        size: size * 0.09, vertexColors: true, transparent: true, opacity: 1,
-        blending: THREE.AdditiveBlending, depthWrite: false }));
-      this.shipHeads.frustumCulled = false;
-      city.add(this.shipHeads);
+
+      const L = size * 0.7;                                   // hull length
+      const hullGeo   = new THREE.BoxGeometry(L * 0.16, L * 0.10, L);
+      const stripGeo  = new THREE.BoxGeometry(L * 0.02, L * 0.03, L * 0.82);
+      const engineGeo = new THREE.BoxGeometry(L * 0.12, L * 0.06, L * 0.05);
+      const navGeo    = new THREE.BoxGeometry(L * 0.045, L * 0.045, L * 0.045);
+      const hullMat   = new THREE.MeshBasicMaterial({ color: 0x141d2c, transparent: true, opacity: 0 });
+      const engCyan   = new THREE.MeshBasicMaterial({ color: 0x9ff4ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const engAmber  = new THREE.MeshBasicMaterial({ color: 0xffc266, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const navCyanM  = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const navPinkM  = new THREE.MeshBasicMaterial({ color: 0xff2d8a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      this.shipMats = [hullMat, engCyan, engAmber, navCyanM, navPinkM];
+
       for (let i = 0; i < N; i++) {
+        const cyan = Math.random() < 0.6;
+        const eng = cyan ? engCyan : engAmber;
+        const grp = new THREE.Group();
+        grp.add(new THREE.Mesh(hullGeo, hullMat));
+        const sL = new THREE.Mesh(stripGeo, eng); sL.position.set(-L * 0.09, 0, 0); grp.add(sL);
+        const sR = new THREE.Mesh(stripGeo, eng); sR.position.set( L * 0.09, 0, 0); grp.add(sR);
+        const en = new THREE.Mesh(engineGeo, eng); en.position.set(0, 0, -L * 0.52); grp.add(en);
+        const navA = new THREE.Mesh(navGeo, navCyanM); navA.position.set(-L * 0.10, L * 0.04,  L * 0.46); grp.add(navA);
+        const navB = new THREE.Mesh(navGeo, navPinkM); navB.position.set( L * 0.10, L * 0.04,  L * 0.46); grp.add(navB);
+        city.add(grp);
+        this.shipGroups.push({ grp, navA, navB });
+
         const a = Math.random() * Math.PI * 2;
         this.ships.push({
           p: new THREE.Vector3(Math.cos(a) * size * 8, floorY + size * (2 + Math.random() * 4), Math.sin(a) * size * 8),
@@ -949,7 +965,7 @@ export class Renderer {
           w1: 0.005 + Math.random() * 0.01, p1: Math.random() * 6.28,
           w2: 0.003 + Math.random() * 0.008, p2: Math.random() * 6.28,
           speed: size * (0.018 + Math.random() * 0.02),
-          hue: Math.random() < 0.6 ? [0.6, 0.95, 1.0] : [1.0, 0.7, 0.25],
+          hue: cyan ? [0.6, 0.95, 1.0] : [1.0, 0.7, 0.25],
         });
       }
     }
@@ -1322,10 +1338,13 @@ export class Renderer {
     }
 
     // — Airships: wander on curving paths; occasionally dock into a monolith —
-    if (this.shipHeads && this.shipTrails) {
+    if (this.shipTrails && this.shipGroups.length) {
       const size = this.game.size;
+      for (const mat of this.shipMats) (mat as THREE.MeshBasicMaterial).opacity = rev;
+      (this.shipMats[0] as THREE.MeshBasicMaterial).opacity = rev * 0.95;
       for (let i = 0; i < this.ships.length; i++) {
         const sh = this.ships[i];
+        const sg = this.shipGroups[i];
         sh.cooldown -= f;
         if (sh.mode === 'cruise') {
           sh.theta += Math.sin(this.hoverPhase * sh.w1 + sh.p1) * 0.02 * f;
@@ -1341,7 +1360,6 @@ export class Renderer {
         } else {
           const to = this._tmpV.copy(sh.dock).sub(sh.p);
           if (to.length() < size * 0.6) {
-            // hull entry: spark flash, then re-emerge from another monolith later
             this._spawnBurst(sh.p.x, sh.p.y, sh.p.z, 0x66ddff);
             const m = this.monoliths[(Math.random() * this.monoliths.length) | 0];
             sh.p.copy(m.grp.position);
@@ -1355,21 +1373,31 @@ export class Renderer {
           }
         }
         sh.p.addScaledVector(sh.v, f);
-        const blink = 0.7 + 0.3 * Math.sin(this.hoverPhase * 1.6 + sh.p1 * 4);
-        const hi = rev * blink * this.silhouetteFade(sh.p);
+
+        // Pose the vessel: position, face along velocity, hide when it would
+        // cross the board's on-screen footprint (shared materials can't fade
+        // per ship, so visibility carries the silhouette rule).
+        const fade = this.silhouetteFade(sh.p);
+        sg.grp.position.copy(sh.p);
+        this._tmpV2.copy(sh.p).add(sh.v);
+        sg.grp.lookAt(this._tmpV2);
+        sg.grp.visible = rev > 0.002 && fade > 0.35;
+        const blinkA = 0.4 + 0.6 * Math.max(0, Math.sin(this.hoverPhase * 1.8 + sh.p1 * 4));
+        const blinkB = 0.4 + 0.6 * Math.max(0, Math.sin(this.hoverPhase * 1.8 + sh.p1 * 4 + 3.1));
+        sg.navA.scale.setScalar(blinkA);
+        sg.navB.scale.setScalar(blinkB);
+
+        // Engine wake.
+        const hi = rev * fade;
         const o = i * 6;
-        const tail = this._tmpV2.copy(sh.p).addScaledVector(sh.v, -10);
+        const tail = this._tmpV2.copy(sh.p).addScaledVector(sh.v, -42);
         this.shipTrailPos[o]   = sh.p.x;  this.shipTrailPos[o+1] = sh.p.y;  this.shipTrailPos[o+2] = sh.p.z;
         this.shipTrailPos[o+3] = tail.x;  this.shipTrailPos[o+4] = tail.y;  this.shipTrailPos[o+5] = tail.z;
         this.shipTrailCol[o]   = sh.hue[0]*hi; this.shipTrailCol[o+1] = sh.hue[1]*hi; this.shipTrailCol[o+2] = sh.hue[2]*hi;
-        this.shipTrailCol[o+3] = sh.hue[0]*hi*0.05; this.shipTrailCol[o+4] = sh.hue[1]*hi*0.05; this.shipTrailCol[o+5] = sh.hue[2]*hi*0.05;
-        this.shipHeadAttr!.setXYZ(i, sh.p.x, sh.p.y, sh.p.z);
-        this.shipHeadCol!.setXYZ(i, sh.hue[0]*hi, sh.hue[1]*hi, sh.hue[2]*hi);
+        this.shipTrailCol[o+3] = 0; this.shipTrailCol[o+4] = 0; this.shipTrailCol[o+5] = 0;
       }
       (this.shipTrails.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
       (this.shipTrails.geometry.attributes['color'] as THREE.BufferAttribute).needsUpdate = true;
-      this.shipHeadAttr!.needsUpdate = true;
-      this.shipHeadCol!.needsUpdate = true;
     }
 
     // — Rare meteor across the deep sky —
