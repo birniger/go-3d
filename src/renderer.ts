@@ -232,7 +232,7 @@ export class Renderer {
   private blockLayers: { mat: THREE.PointsMaterial; phase: number }[] = [];
   private monoliths: { grp: THREE.Group; bodyMat: THREE.MeshBasicMaterial; edge: THREE.LineSegments; spin: number; phase: number; baseY: number; dockFlash: number }[] = [];
   // Live status boards (whose turn, stones, prisoners) — the void reports the game.
-  private signs: { grp: THREE.Group; mat: THREE.MeshBasicMaterial; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; kind: 'turn' | 'stones' | 'prisoners' | 'id' | 'ad'; shape: string; w: number; h: number; ad: string; baseY: number; fphase: number; famp: number; flick: number; speed: number }[] = [];
+  private signs: { grp: THREE.Group; mat: THREE.MeshBasicMaterial; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; kind: 'turn' | 'stones' | 'prisoners' | 'id' | 'ad'; shape: string; w: number; h: number; ad: string; ang: number; angSpd: number; rad: number; radAmp: number; yBase: number; yAmp: number; ph: number; yawAmp: number; yawPh: number; yawSpd: number; scBase: number; scAmp: number; scPh: number; scSpd: number; flick: number; speed: number }[] = [];
   private capByBlack = 0;
   private capByWhite = 0;
   private dockFx: { ring: THREE.LineLoop; rMat: THREE.LineBasicMaterial; spr: THREE.Sprite; sMat: THREE.SpriteMaterial; life: number; on: boolean }[] = [];
@@ -920,11 +920,21 @@ export class Renderer {
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
       const board = new THREE.Mesh(new THREE.PlaneGeometry(spec.pw, spec.ph), mat);
       const grp = new THREE.Group();
-      grp.position.set(Math.cos(spec.ang) * spec.rad, spec.y, Math.sin(spec.ang) * spec.rad);
       grp.add(board);
-      grp.lookAt(0, spec.y, 0);
       city.add(grp);
-      this.signs.push({ grp, mat, ctx, tex, kind: spec.kind, shape: spec.shape, w: spec.cw, h: spec.ch, ad: adName, baseY: spec.y, fphase: Math.random()*6.28, famp: size*(0.3+Math.random()*0.3), flick: Math.random()*10, speed: 0.04+Math.random()*0.05 });
+      // Each sign roams its own slow orbit through the monolith field, turns its
+      // face toward/away from the construct on its own cycle (so we sometimes
+      // catch it edge-on), and breathes in size (some too small to read).
+      this.signs.push({
+        grp, mat, ctx, tex, kind: spec.kind, shape: spec.shape, w: spec.cw, h: spec.ch, ad: adName,
+        ang: spec.ang, angSpd: (Math.random() < 0.5 ? -1 : 1) * (0.0005 + Math.random() * 0.0011),
+        rad: spec.rad, radAmp: size * (0.8 + Math.random() * 1.4),
+        yBase: spec.y, yAmp: size * (0.4 + Math.random() * 0.9),
+        ph: Math.random() * 6.28,
+        yawAmp: 0.8 + Math.random() * 1.1, yawPh: Math.random() * 6.28, yawSpd: 0.004 + Math.random() * 0.006,
+        scBase: 0.72 + Math.random() * 0.42, scAmp: 0.24 + Math.random() * 0.3, scPh: Math.random() * 6.28, scSpd: 0.005 + Math.random() * 0.008,
+        flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05,
+      });
     });
     this.refreshSignage();
 
@@ -1511,12 +1521,20 @@ export class Renderer {
     }
     for (const sg of this.signs) {
       sg.flick += sg.speed * f;
-      sg.fphase += 0.012 * f;
+      sg.ang += sg.angSpd * f;
+      sg.ph += 0.01 * f; sg.yawPh += sg.yawSpd * f; sg.scPh += sg.scSpd * f;
       const glitch = Math.random() < 0.01 ? 0.4 : 0;
       sg.mat.opacity = rev * Math.max(0.45, 0.92 - glitch + 0.06 * Math.sin(sg.flick * 1.7));
-      // Free-float: gentle bob + sway in place (no pole).
-      sg.grp.position.y = sg.baseY + sg.famp * Math.sin(sg.fphase);
-      sg.grp.rotation.z = 0.04 * Math.sin(sg.fphase * 0.7);
+      // Roam: slow orbit + breathing radius + vertical drift through the field.
+      const rad = sg.rad + sg.radAmp * Math.sin(sg.ph * 0.6);
+      const px = Math.cos(sg.ang) * rad, pz = Math.sin(sg.ang) * rad;
+      sg.grp.position.set(px, sg.yBase + sg.yAmp * Math.sin(sg.ph), pz);
+      // Orientation from a controlled Euler (YXZ) so text never flips: yaw
+      // swings around the face-the-construct heading, sometimes turning edge-on.
+      const face = Math.atan2(-px, -pz);
+      sg.grp.rotation.set(0.16 * Math.sin(sg.ph * 0.8), face + sg.yawAmp * Math.sin(sg.yawPh), 0.05 * Math.sin(sg.ph * 1.3), 'YXZ');
+      // Breathe in size — some shrink past readable, then swell back.
+      sg.grp.scale.setScalar(sg.scBase + sg.scAmp * Math.sin(sg.scPh));
     }
 
     // — Rising embers —
