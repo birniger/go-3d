@@ -232,7 +232,7 @@ export class Renderer {
   private blockLayers: { mat: THREE.PointsMaterial; phase: number }[] = [];
   private monoliths: { grp: THREE.Group; bodyMat: THREE.MeshBasicMaterial; edge: THREE.LineSegments; spin: number; phase: number; baseY: number; dockFlash: number }[] = [];
   // Live status boards (whose turn, stones, prisoners) — the void reports the game.
-  private signs: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; kind: 'turn' | 'stones' | 'prisoners' | 'id' | 'ad'; w: number; h: number; ad: string; flick: number; speed: number }[] = [];
+  private signs: { grp: THREE.Group; mat: THREE.MeshBasicMaterial; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; kind: 'turn' | 'stones' | 'prisoners' | 'id' | 'ad'; shape: string; w: number; h: number; ad: string; baseY: number; fphase: number; famp: number; flick: number; speed: number }[] = [];
   private capByBlack = 0;
   private capByWhite = 0;
   private dockFx: { ring: THREE.LineLoop; rMat: THREE.LineBasicMaterial; spr: THREE.Sprite; sMat: THREE.SpriteMaterial; life: number; on: boolean }[] = [];
@@ -643,61 +643,103 @@ export class Renderer {
     for (const e of this.stoneEntries) (e.player === 1 ? b++ : w++);
     const turnBlack = this.game.currentPlayer === 1;
 
-    // Shared Blade-Runner panel chrome: gradient ground, neon frame, corner
-    // brackets, and a scanline overlay.
-    const panel = (ctx: CanvasRenderingContext2D, cw: number, ch: number, accent: string) => {
-      ctx.clearRect(0, 0, cw, ch);
-      const g = ctx.createLinearGradient(0, 0, 0, ch);
-      g.addColorStop(0, 'rgba(7,11,20,0.96)'); g.addColorStop(1, 'rgba(2,4,9,0.96)');
-      ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
-      ctx.strokeStyle = accent; ctx.lineWidth = 3; ctx.strokeRect(6, 6, cw - 12, ch - 12);
-      ctx.save(); ctx.globalAlpha = 0.4; ctx.lineWidth = 1; ctx.strokeRect(12, 12, cw - 24, ch - 24); ctx.restore();
-      const tk = 16; ctx.strokeStyle = accent; ctx.lineWidth = 4;
-      for (const [cx, cy, sx, sy] of [[6,6,1,1],[cw-6,6,-1,1],[6,ch-6,1,-1],[cw-6,ch-6,-1,-1]] as [number,number,number,number][]) {
-        ctx.beginPath(); ctx.moveTo(cx + sx*tk, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + sy*tk); ctx.stroke();
+    // Build the silhouette path for a sign shape (drawn on a TRANSPARENT canvas
+    // so the holo reads as a hexagon / disc / ribbon / tower, not a rectangle).
+    const shapePath = (cw: number, ch: number, shape: string): Path2D => {
+      const m = 7, p = new Path2D();
+      const cx = cw / 2, cy = ch / 2;
+      if (shape === 'disc') {
+        p.arc(cx, cy, Math.min(cw, ch) / 2 - m, 0, Math.PI * 2);
+      } else if (shape === 'hex') {                       // pointy-top hexagon
+        const rx = cw / 2 - m, ry = ch / 2 - m;
+        for (let k = 0; k < 6; k++) {
+          const a = -Math.PI / 2 + k * Math.PI / 3;
+          const x = cx + Math.cos(a) * rx, y = cy + Math.sin(a) * ry;
+          k ? p.lineTo(x, y) : p.moveTo(x, y);
+        }
+        p.closePath();
+      } else if (shape === 'banner') {                    // wide pointed ribbon
+        const t = ch * 0.42;
+        p.moveTo(m, cy); p.lineTo(m + t, m); p.lineTo(cw - m - t, m);
+        p.lineTo(cw - m, cy); p.lineTo(cw - m - t, ch - m); p.lineTo(m + t, ch - m);
+        p.closePath();
+      } else if (shape === 'tall') {                      // vertical pointed hexagon
+        const t = ch * 0.16;
+        p.moveTo(cx, m); p.lineTo(cw - m, m + t); p.lineTo(cw - m, ch - m - t);
+        p.lineTo(cx, ch - m); p.lineTo(m, ch - m - t); p.lineTo(m, m + t);
+        p.closePath();
+      } else {                                            // 'tower' \u2014 peaked pentagon
+        const notch = ch * 0.13;
+        p.moveTo(m, m + notch); p.lineTo(cx, m); p.lineTo(cw - m, m + notch);
+        p.lineTo(cw - m, ch - m); p.lineTo(m, ch - m);
+        p.closePath();
       }
+      return p;
+    };
+
+    // Shared Blade-Runner chrome, clipped to the silhouette: gradient ground,
+    // double neon frame, and a scanline overlay.
+    const panel = (ctx: CanvasRenderingContext2D, cw: number, ch: number, shape: string, accent: string) => {
+      ctx.clearRect(0, 0, cw, ch);
+      const path = shapePath(cw, ch, shape);
+      ctx.save(); ctx.clip(path);
+      const g = ctx.createLinearGradient(0, 0, 0, ch);
+      g.addColorStop(0, 'rgba(7,11,20,0.95)'); g.addColorStop(1, 'rgba(2,4,9,0.95)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
       ctx.fillStyle = 'rgba(0,0,0,0.22)';
       for (let y = 2; y < ch; y += 3) ctx.fillRect(0, y, cw, 1);
+      ctx.restore();
+      ctx.save();
+      ctx.shadowColor = accent; ctx.shadowBlur = 12;
+      ctx.strokeStyle = accent; ctx.lineWidth = 3; ctx.stroke(path);
+      ctx.shadowBlur = 0; ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
+      const inner = shapePath(cw - 10, ch - 10, shape);
+      ctx.translate(5, 5); ctx.stroke(inner);
+      ctx.restore();
     };
 
     for (const sg of this.signs) {
-      const ctx = sg.ctx, cw = sg.w, ch = sg.h;
+      const ctx = sg.ctx, cw = sg.w, ch = sg.h, cx = cw / 2;
       const accent = sg.kind === 'turn' ? (turnBlack ? '#00e5ff' : '#ff2d8a')
                    : sg.kind === 'prisoners' ? '#ff7a3c'
                    : sg.kind === 'ad' ? '#ff2d8a' : '#19f5a0';
-      panel(ctx, cw, ch, accent);
-      ctx.textAlign = 'center';
+      panel(ctx, cw, ch, sg.shape, accent);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
 
       if (sg.kind === 'turn') {
-        ctx.fillStyle = 'rgba(120,135,160,0.8)'; ctx.font = '13px monospace'; ctx.fillText('// TURN', 128, 30);
+        ctx.fillStyle = 'rgba(125,140,165,0.85)'; ctx.font = '13px monospace'; ctx.fillText('// TURN', cx, 62);
         ctx.fillStyle = accent; ctx.font = 'bold 30px monospace';
-        ctx.fillText(turnBlack ? '\u25CF BLACK' : '\u25CB WHITE', 128, 70);
-        ctx.fillStyle = 'rgba(185,200,220,0.85)'; ctx.font = '15px monospace'; ctx.fillText('TO MOVE', 128, 100);
-      } else if (sg.kind === 'stones' || sg.kind === 'prisoners') {
-        const lhs = sg.kind === 'stones' ? b : this.capByBlack;
-        const rhs = sg.kind === 'stones' ? w : this.capByWhite;
-        ctx.fillStyle = 'rgba(120,135,160,0.82)'; ctx.font = '13px monospace';
-        ctx.fillText(sg.kind === 'stones' ? '// STONES' : '// PRISONERS', 128, 30);
-        ctx.font = 'bold 34px monospace';
-        ctx.fillStyle = '#7af0ff'; ctx.textAlign = 'left';  ctx.fillText('\u25CF ' + lhs, 26, 88);
-        ctx.fillStyle = '#ff8fb6'; ctx.textAlign = 'right'; ctx.fillText(rhs + ' \u25CB', 230, 88);
+        ctx.fillText(turnBlack ? '\u25CF BLACK' : '\u25CB WHITE', cx, 108);
+        ctx.fillStyle = 'rgba(190,205,225,0.88)'; ctx.font = '15px monospace'; ctx.fillText('TO MOVE', cx, 142);
+      } else if (sg.kind === 'stones') {
+        // Disc: header + two big stacked, color-coded tallies \u2014 easy to read.
+        ctx.fillStyle = 'rgba(125,140,165,0.85)'; ctx.font = '14px monospace'; ctx.fillText('STONES', cx, 58);
+        ctx.font = 'bold 48px monospace';
+        ctx.fillStyle = '#79e9ff'; ctx.fillText('\u25CF ' + b, cx, 122);
+        ctx.fillStyle = '#ff8fb6'; ctx.fillText('\u25CB ' + w, cx, 182);
+      } else if (sg.kind === 'prisoners') {
+        // Wide ribbon: header + two big tallies side-by-side, clearly labelled.
+        ctx.fillStyle = 'rgba(125,140,165,0.85)'; ctx.font = '13px monospace'; ctx.fillText('PRISONERS', cx, 38);
+        ctx.font = 'bold 42px monospace';
+        ctx.fillStyle = '#79e9ff'; ctx.fillText('\u25CF ' + this.capByBlack, cx - 52, 92);
+        ctx.fillStyle = '#ff8fb6'; ctx.fillText('\u25CB ' + this.capByWhite, cx + 56, 92);
       } else if (sg.kind === 'id') {
-        // Tall vertical id sign.
-        ctx.fillStyle = '#19f5a0'; ctx.font = 'bold 40px monospace';
-        ctx.fillText('GO', 64, 70); ctx.fillText('3D', 64, 116);
+        // Tall peaked tower id sign.
+        ctx.fillStyle = '#19f5a0'; ctx.font = 'bold 38px monospace';
+        ctx.fillText('GO', cx, 78); ctx.fillText('3D', cx, 120);
         ctx.strokeStyle = 'rgba(25,245,160,0.5)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(28, 138); ctx.lineTo(100, 138); ctx.stroke();
-        ctx.fillStyle = 'rgba(185,200,220,0.8)'; ctx.font = '16px monospace';
-        ctx.fillText('NET', 64, 168); ctx.fillText(this.game.size + '\u00B3', 64, 200);
-        ctx.fillStyle = 'rgba(120,135,160,0.7)'; ctx.font = '11px monospace';
-        ctx.fillText('SECTOR-7', 64, 230);
+        ctx.beginPath(); ctx.moveTo(cx - 36, 142); ctx.lineTo(cx + 36, 142); ctx.stroke();
+        ctx.fillStyle = 'rgba(190,205,225,0.82)'; ctx.font = '16px monospace';
+        ctx.fillText('NET', cx, 172); ctx.fillText(this.game.size + '\u00B3', cx, 204);
+        ctx.fillStyle = 'rgba(125,140,165,0.72)'; ctx.font = '11px monospace';
+        ctx.fillText('SECTOR-7', cx, 232);
       } else {
         // Tall megacorp ad: stacked vertical kanji + neon strip (Blade Runner).
         ctx.save();
-        ctx.fillStyle = accent; ctx.fillRect(20, 24, 6, 208);
-        ctx.font = 'bold 34px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillStyle = accent; ctx.fillRect(cx - 30, 34, 5, ch - 76);
+        ctx.font = 'bold 32px sans-serif'; ctx.textAlign = 'center';
         const chars = [...sg.ad];
-        chars.forEach((c, k) => { ctx.fillStyle = k % 2 ? '#9ff4ff' : accent; ctx.fillText(c, 78, 64 + k * 44); });
+        chars.forEach((c, k) => { ctx.fillStyle = k % 2 ? '#9ff4ff' : accent; ctx.fillText(c, cx + 8, 66 + k * 42); });
         ctx.restore();
       }
       sg.tex.needsUpdate = true;
@@ -858,44 +900,31 @@ export class Renderer {
       this.monoliths.push({ grp, bodyMat, edge, spin: (Math.random() - 0.5) * 0.0012, phase: Math.random() * 6.28, baseY, dockFlash: 0 });
     }
 
-    // — Status boards: a small skyline of free-standing neon signs ringing the
-    // play volume — Blade-Runner billboards reporting the live game. Mixed
-    // shapes (wide panels + tall vertical signs), each distinct, set back from
-    // the board but scaled up so they stay readable. Redrawn each move. —
+    // — Status boards: a constellation of free-standing neon holo-signs that
+    // float in their own pockets of the void (no poles), in mixed silhouettes —
+    // hexagon, disc, banner, towers — each reporting the live game. —
     const adNames = ['\u767D\u77F3\u96FB\u6C17', '\u5929\u5143\u91CD\u5DE5', '\u30B3\u30DF\u30BB\u30F3', '\u9762\u76EE\u30CA\u30CE'];
     const adName = adNames[(Math.random() * adNames.length) | 0];
-    const signSpecs: { kind: 'turn' | 'stones' | 'prisoners' | 'id' | 'ad'; shape: 'wide' | 'tall'; rad: number; ang: number; y: number; tilt: number }[] = [
-      { kind: 'turn',      shape: 'wide', rad: size * 5.0, ang: 0.35, y: size * 1.3, tilt: 0    },
-      { kind: 'stones',    shape: 'wide', rad: size * 5.8, ang: 1.85, y: size * 0.3, tilt: 0.1  },
-      { kind: 'prisoners', shape: 'wide', rad: size * 5.4, ang: 3.45, y: size * 2.0, tilt: -0.1 },
-      { kind: 'ad',        shape: 'tall', rad: size * 5.2, ang: 4.65, y: size * 1.4, tilt: 0.05 },
-      { kind: 'id',        shape: 'tall', rad: size * 6.2, ang: 5.75, y: size * 0.9, tilt: 0    },
+    type SS = { kind: 'turn' | 'stones' | 'prisoners' | 'id' | 'ad'; shape: string; cw: number; ch: number; pw: number; ph: number; rad: number; ang: number; y: number };
+    const signSpecs: SS[] = [
+      { kind: 'turn',      shape: 'hex',    cw: 200, ch: 200, pw: size*2.3, ph: size*2.3, rad: size*5.0, ang: 0.35, y: size*1.4 },
+      { kind: 'stones',    shape: 'disc',   cw: 220, ch: 220, pw: size*2.3, ph: size*2.3, rad: size*5.7, ang: 1.85, y: size*0.5 },
+      { kind: 'prisoners', shape: 'banner', cw: 256, ch: 120, pw: size*2.4, ph: size*1.12,rad: size*5.3, ang: 3.45, y: size*2.1 },
+      { kind: 'ad',        shape: 'tall',   cw: 120, ch: 256, pw: size*1.3, ph: size*2.8, rad: size*5.2, ang: 4.65, y: size*1.5 },
+      { kind: 'id',        shape: 'tower',  cw: 120, ch: 256, pw: size*1.3, ph: size*2.8, rad: size*6.2, ang: 5.75, y: size*0.9 },
     ];
-    const postMat = new THREE.MeshBasicMaterial({ color: 0x0a5a6e, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-    this.signPostMat = postMat;
     signSpecs.forEach(spec => {
-      const wide = spec.shape === 'wide';
-      const cw = wide ? 256 : 128, ch = wide ? 128 : 256;
-      const ac = document.createElement('canvas'); ac.width = cw; ac.height = ch;
+      const ac = document.createElement('canvas'); ac.width = spec.cw; ac.height = spec.ch;
       const ctx = ac.getContext('2d')!;
       const tex = new THREE.CanvasTexture(ac);
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-      const pw = wide ? size * 2.3 : size * 1.4, ph = wide ? size * 1.15 : size * 2.8;
-      const board = new THREE.Mesh(new THREE.PlaneGeometry(pw, ph), mat);
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(spec.pw, spec.ph), mat);
       const grp = new THREE.Group();
-      grp.position.set(Math.cos(spec.ang) * spec.rad, 0, Math.sin(spec.ang) * spec.rad);
-      board.position.y = spec.y;
-      board.rotation.z = spec.tilt;
+      grp.position.set(Math.cos(spec.ang) * spec.rad, spec.y, Math.sin(spec.ang) * spec.rad);
       grp.add(board);
-      const postH = spec.y - ph / 2 - floorY;
-      if (postH > 0) {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.05, size * 0.08, postH, 6), postMat);
-        post.position.y = floorY + postH / 2;
-        grp.add(post);
-      }
       grp.lookAt(0, spec.y, 0);
       city.add(grp);
-      this.signs.push({ mesh: board, mat, ctx, tex, kind: spec.kind, w: cw, h: ch, ad: adName, flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05 });
+      this.signs.push({ grp, mat, ctx, tex, kind: spec.kind, shape: spec.shape, w: spec.cw, h: spec.ch, ad: adName, baseY: spec.y, fphase: Math.random()*6.28, famp: size*(0.3+Math.random()*0.3), flick: Math.random()*10, speed: 0.04+Math.random()*0.05 });
     });
     this.refreshSignage();
 
@@ -1482,10 +1511,13 @@ export class Renderer {
     }
     for (const sg of this.signs) {
       sg.flick += sg.speed * f;
+      sg.fphase += 0.012 * f;
       const glitch = Math.random() < 0.01 ? 0.4 : 0;
       sg.mat.opacity = rev * Math.max(0.45, 0.92 - glitch + 0.06 * Math.sin(sg.flick * 1.7));
+      // Free-float: gentle bob + sway in place (no pole).
+      sg.grp.position.y = sg.baseY + sg.famp * Math.sin(sg.fphase);
+      sg.grp.rotation.z = 0.04 * Math.sin(sg.fphase * 0.7);
     }
-    if (this.signPostMat) this.signPostMat.opacity = rev * 0.5;
 
     // — Rising embers —
     if (this.emberAttr && this.emberMat) {
