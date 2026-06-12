@@ -232,7 +232,7 @@ export class Renderer {
   private blockLayers: { mat: THREE.PointsMaterial; phase: number }[] = [];
   private monoliths: { grp: THREE.Group; bodyMat: THREE.MeshBasicMaterial; edge: THREE.LineSegments; spin: number; phase: number; baseY: number; dockFlash: number }[] = [];
   // Live status boards (whose turn, stones, prisoners) — the void reports the game.
-  private signs: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; kind: 'turn' | 'stones' | 'prisoners' | 'id'; flick: number; speed: number }[] = [];
+  private signs: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; kind: 'turn' | 'stones' | 'prisoners' | 'id' | 'ad'; w: number; h: number; ad: string; flick: number; speed: number }[] = [];
   private capByBlack = 0;
   private capByWhite = 0;
   private dockFx: { ring: THREE.LineLoop; rMat: THREE.LineBasicMaterial; spr: THREE.Sprite; sMat: THREE.SpriteMaterial; life: number; on: boolean }[] = [];
@@ -641,40 +641,69 @@ export class Renderer {
     let b = 0, w = 0;
     for (const e of this.stoneEntries) (e.player === 1 ? b++ : w++);
     const turnBlack = this.game.currentPlayer === 1;
+
+    // Shared Blade-Runner panel chrome: gradient ground, neon frame, corner
+    // brackets, and a scanline overlay.
+    const panel = (ctx: CanvasRenderingContext2D, cw: number, ch: number, accent: string) => {
+      ctx.clearRect(0, 0, cw, ch);
+      const g = ctx.createLinearGradient(0, 0, 0, ch);
+      g.addColorStop(0, 'rgba(7,11,20,0.96)'); g.addColorStop(1, 'rgba(2,4,9,0.96)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
+      ctx.strokeStyle = accent; ctx.lineWidth = 3; ctx.strokeRect(6, 6, cw - 12, ch - 12);
+      ctx.save(); ctx.globalAlpha = 0.4; ctx.lineWidth = 1; ctx.strokeRect(12, 12, cw - 24, ch - 24); ctx.restore();
+      const tk = 16; ctx.strokeStyle = accent; ctx.lineWidth = 4;
+      for (const [cx, cy, sx, sy] of [[6,6,1,1],[cw-6,6,-1,1],[6,ch-6,1,-1],[cw-6,ch-6,-1,-1]] as [number,number,number,number][]) {
+        ctx.beginPath(); ctx.moveTo(cx + sx*tk, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + sy*tk); ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      for (let y = 2; y < ch; y += 3) ctx.fillRect(0, y, cw, 1);
+    };
+
     for (const sg of this.signs) {
-      const ctx = sg.ctx;
-      ctx.clearRect(0, 0, 256, 128);
-      ctx.fillStyle = 'rgba(4,8,14,0.92)'; ctx.fillRect(0, 0, 256, 128);
+      const ctx = sg.ctx, cw = sg.w, ch = sg.h;
       const accent = sg.kind === 'turn' ? (turnBlack ? '#00e5ff' : '#ff2d8a')
-                   : sg.kind === 'prisoners' ? '#ff7a3c' : '#19f5a0';
-      ctx.strokeStyle = accent; ctx.lineWidth = 3; ctx.strokeRect(4, 4, 248, 120);
-      ctx.fillStyle = 'rgba(120,135,160,0.85)'; ctx.font = '13px monospace'; ctx.textAlign = 'left';
-      const drawDual = (label: string, lhs: string, rhs: string) => {
-        ctx.fillStyle = 'rgba(120,135,160,0.8)'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
-        ctx.fillText(label, 128, 32);
-        ctx.font = 'bold 30px monospace';
-        ctx.fillStyle = '#7af0ff'; ctx.textAlign = 'left';  ctx.fillText('\u25CF ' + lhs, 22, 86);
-        ctx.fillStyle = '#ff8fb6'; ctx.textAlign = 'right'; ctx.fillText(rhs + ' \u25CB', 234, 86);
-      };
+                   : sg.kind === 'prisoners' ? '#ff7a3c'
+                   : sg.kind === 'ad' ? '#ff2d8a' : '#19f5a0';
+      panel(ctx, cw, ch, accent);
+      ctx.textAlign = 'center';
+
       if (sg.kind === 'turn') {
-        ctx.fillStyle = accent; ctx.font = 'bold 26px monospace'; ctx.textAlign = 'center';
-        ctx.fillText(turnBlack ? '\u25CF BLACK' : '\u25CB WHITE', 128, 58);
-        ctx.fillStyle = 'rgba(180,195,215,0.85)'; ctx.font = '16px monospace';
-        ctx.fillText('TO MOVE', 128, 92);
-      } else if (sg.kind === 'stones') {
-        drawDual('STONES ON BOARD', String(b), String(w));
-      } else if (sg.kind === 'prisoners') {
-        drawDual('PRISONERS', String(this.capByBlack), String(this.capByWhite));
+        ctx.fillStyle = 'rgba(120,135,160,0.8)'; ctx.font = '13px monospace'; ctx.fillText('// TURN', 128, 30);
+        ctx.fillStyle = accent; ctx.font = 'bold 30px monospace';
+        ctx.fillText(turnBlack ? '\u25CF BLACK' : '\u25CB WHITE', 128, 70);
+        ctx.fillStyle = 'rgba(185,200,220,0.85)'; ctx.font = '15px monospace'; ctx.fillText('TO MOVE', 128, 100);
+      } else if (sg.kind === 'stones' || sg.kind === 'prisoners') {
+        const lhs = sg.kind === 'stones' ? b : this.capByBlack;
+        const rhs = sg.kind === 'stones' ? w : this.capByWhite;
+        ctx.fillStyle = 'rgba(120,135,160,0.82)'; ctx.font = '13px monospace';
+        ctx.fillText(sg.kind === 'stones' ? '// STONES' : '// PRISONERS', 128, 30);
+        ctx.font = 'bold 34px monospace';
+        ctx.fillStyle = '#7af0ff'; ctx.textAlign = 'left';  ctx.fillText('\u25CF ' + lhs, 26, 88);
+        ctx.fillStyle = '#ff8fb6'; ctx.textAlign = 'right'; ctx.fillText(rhs + ' \u25CB', 230, 88);
+      } else if (sg.kind === 'id') {
+        // Tall vertical id sign.
+        ctx.fillStyle = '#19f5a0'; ctx.font = 'bold 40px monospace';
+        ctx.fillText('GO', 64, 70); ctx.fillText('3D', 64, 116);
+        ctx.strokeStyle = 'rgba(25,245,160,0.5)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(28, 138); ctx.lineTo(100, 138); ctx.stroke();
+        ctx.fillStyle = 'rgba(185,200,220,0.8)'; ctx.font = '16px monospace';
+        ctx.fillText('NET', 64, 168); ctx.fillText(this.game.size + '\u00B3', 64, 200);
+        ctx.fillStyle = 'rgba(120,135,160,0.7)'; ctx.font = '11px monospace';
+        ctx.fillText('SECTOR-7', 64, 230);
       } else {
-        ctx.fillStyle = '#19f5a0'; ctx.font = 'bold 30px monospace'; ctx.textAlign = 'center';
-        ctx.fillText('GO\u00B73D', 128, 56);
-        ctx.fillStyle = 'rgba(180,195,215,0.8)'; ctx.font = '15px monospace';
-        ctx.fillText(this.game.size + '\u00B3 \u00B7 NET', 128, 90);
+        // Tall megacorp ad: stacked vertical kanji + neon strip (Blade Runner).
+        ctx.save();
+        ctx.fillStyle = accent; ctx.fillRect(20, 24, 6, 208);
+        ctx.font = 'bold 34px sans-serif'; ctx.textAlign = 'center';
+        const chars = [...sg.ad];
+        chars.forEach((c, k) => { ctx.fillStyle = k % 2 ? '#9ff4ff' : accent; ctx.fillText(c, 78, 64 + k * 44); });
+        ctx.restore();
       }
       sg.tex.needsUpdate = true;
     }
   }
 
+  /** Fire the local dock burst (flash + shock ring) at a world point. */
   /** Fire the local dock burst (flash + shock ring) at a world point. */
   private spawnDockFx(p: THREE.Vector3): void {
     const fx = this.dockFx.find(q => !q.on);
@@ -828,33 +857,44 @@ export class Renderer {
       this.monoliths.push({ grp, bodyMat, edge, spin: (Math.random() - 0.5) * 0.0012, phase: Math.random() * 6.28, baseY, dockFlash: 0 });
     }
 
-    // — Status boards: free-standing HUD signs reporting the live game, raised
-    // on glowing posts in a ring around the play volume (facing the board), so
-    // they're clearly readable from the zoomed-out framing. Redrawn each move. —
-    const signKinds: ('turn' | 'stones' | 'prisoners' | 'id')[] = ['turn', 'stones', 'prisoners', 'id', 'turn'];
+    // — Status boards: a small skyline of free-standing neon signs ringing the
+    // play volume — Blade-Runner billboards reporting the live game. Mixed
+    // shapes (wide panels + tall vertical signs), each distinct, set back from
+    // the board but scaled up so they stay readable. Redrawn each move. —
+    const adNames = ['\u767D\u77F3\u96FB\u6C17', '\u5929\u5143\u91CD\u5DE5', '\u30B3\u30DF\u30BB\u30F3', '\u9762\u76EE\u30CA\u30CE'];
+    const adName = adNames[(Math.random() * adNames.length) | 0];
+    const signSpecs: { kind: 'turn' | 'stones' | 'prisoners' | 'id' | 'ad'; shape: 'wide' | 'tall'; rad: number; ang: number; y: number; tilt: number }[] = [
+      { kind: 'turn',      shape: 'wide', rad: size * 6.2, ang: 0.35, y: size * 1.6, tilt: 0    },
+      { kind: 'stones',    shape: 'wide', rad: size * 7.6, ang: 1.85, y: size * 0.4, tilt: 0.12 },
+      { kind: 'prisoners', shape: 'wide', rad: size * 7.0, ang: 3.45, y: size * 2.6, tilt: -0.1 },
+      { kind: 'ad',        shape: 'tall', rad: size * 6.6, ang: 4.65, y: size * 1.8, tilt: 0.06 },
+      { kind: 'id',        shape: 'tall', rad: size * 8.4, ang: 5.75, y: size * 1.0, tilt: 0    },
+    ];
     const postMat = new THREE.MeshBasicMaterial({ color: 0x0a5a6e, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
     this.signPostMat = postMat;
-    signKinds.forEach((kind, i) => {
-      const ac = document.createElement('canvas'); ac.width = 256; ac.height = 128;
+    signSpecs.forEach(spec => {
+      const wide = spec.shape === 'wide';
+      const cw = wide ? 256 : 128, ch = wide ? 128 : 256;
+      const ac = document.createElement('canvas'); ac.width = cw; ac.height = ch;
       const ctx = ac.getContext('2d')!;
       const tex = new THREE.CanvasTexture(ac);
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-      const board = new THREE.Mesh(new THREE.PlaneGeometry(size * 3.4, size * 1.7), mat);
-      const ang = (i / signKinds.length) * Math.PI * 2 + 0.5;
-      const rad = size * 4.6;
-      const y = size * (0.6 + (i % 2) * 1.2);
+      const pw = wide ? size * 4.4 : size * 2.2, ph = wide ? size * 2.2 : size * 4.4;
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(pw, ph), mat);
       const grp = new THREE.Group();
-      grp.position.set(Math.cos(ang) * rad, 0, Math.sin(ang) * rad);
-      board.position.y = y;
+      grp.position.set(Math.cos(spec.ang) * spec.rad, 0, Math.sin(spec.ang) * spec.rad);
+      board.position.y = spec.y;
+      board.rotation.z = spec.tilt;
       grp.add(board);
-      // glowing post from the floor up to the board
-      const postH = y - floorY;
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.06, size * 0.06, postH, 6), postMat);
-      post.position.y = floorY + postH / 2;
-      grp.add(post);
-      grp.lookAt(0, y, 0);
+      const postH = spec.y - ph / 2 - floorY;
+      if (postH > 0) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.05, size * 0.08, postH, 6), postMat);
+        post.position.y = floorY + postH / 2;
+        grp.add(post);
+      }
+      grp.lookAt(0, spec.y, 0);
       city.add(grp);
-      this.signs.push({ mesh: board, mat, ctx, tex, kind, flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05 });
+      this.signs.push({ mesh: board, mat, ctx, tex, kind: spec.kind, w: cw, h: ch, ad: adName, flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05 });
     });
     this.refreshSignage();
 
