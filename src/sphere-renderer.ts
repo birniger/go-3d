@@ -103,6 +103,14 @@ export class SphereRenderer {
   private cometTailPos!: Float32Array;
   private cometTailCol!: Float32Array;
   private cometTails: THREE.LineSegments | null = null;
+  // Big outer planets (the galaxy's landmarks) + rockets that orbit and dive.
+  private planets: { grp: THREE.Group; mat: THREE.MeshBasicMaterial; ring: THREE.Mesh | null; spin: number; u: THREE.Vector3; v: THREE.Vector3; r: number; ang: number; speed: number; flash: number }[] = [];
+  private rockets: { p: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3; a: number; b: number; ang: number; speed: number; mode: 'orbit' | 'dive'; target: number; cooldown: number; hue: [number,number,number] }[] = [];
+  private rocketGroups: { grp: THREE.Group; eng: THREE.Mesh }[] = [];
+  private rocketMats: THREE.Material[] = [];
+  private rocketTailPos!: Float32Array;
+  private rocketTailCol!: Float32Array;
+  private rocketTails: THREE.LineSegments | null = null;
   // Reactive: density-wave rings on stone placement + a core flash on capture.
   private waves: { mesh: THREE.LineLoop; mat: THREE.LineBasicMaterial; life: number; on: boolean }[] = [];
   private coreFlash = 0;
@@ -588,6 +596,86 @@ export class SphereRenderer {
       }
     }
 
+    // ── Big planets ── a few large worlds in the far field, the galaxy's
+    // landmarks (counterpart to the cube void's monoliths). Slowly orbit + spin;
+    // one wears a ring. Rockets dive toward them.
+    {
+      const pal = [0x3a6cff, 0xff7a3c, 0x19f5a0, 0xc060ff, 0xffd24a];
+      for (let i = 0; i < 4; i++) {
+        const grp = new THREE.Group();
+        const pr = R * (0.7 + Math.random() * 1.0);
+        // banded planet texture
+        const pc = document.createElement('canvas'); pc.width = 64; pc.height = 64;
+        const pg = pc.getContext('2d')!;
+        const base = pal[i % pal.length];
+        const rgb = `${(base>>16)&255},${(base>>8)&255},${base&255}`;
+        pg.fillStyle = `rgba(${rgb},0.72)`; pg.fillRect(0, 0, 64, 64);
+        for (let y = 0; y < 64; y += 3 + (Math.random()*4|0)) {
+          pg.fillStyle = `rgba(${rgb},${0.3 + Math.random()*0.6})`;
+          pg.fillRect(0, y, 64, 1 + Math.random()*2);
+        }
+        const tex = new THREE.CanvasTexture(pc);
+        const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false });
+        const body = new THREE.Mesh(new THREE.SphereGeometry(pr, 20, 16), mat);
+        grp.add(body);
+        // crescent rim light so they read as lit worlds, not flat discs
+        const rim = new THREE.Mesh(new THREE.SphereGeometry(pr * 1.04, 20, 16),
+          new THREE.MeshBasicMaterial({ color: base, transparent: true, opacity: 0, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+        grp.add(rim);
+        let ring: THREE.Mesh | null = null;
+        if (i === 1) {
+          ring = new THREE.Mesh(new THREE.RingGeometry(pr * 1.4, pr * 2.1, 48),
+            new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+          ring.rotation.x = 1.1; ring.rotation.y = 0.4; grp.add(ring);
+        }
+        const u = new THREE.Vector3(), v = new THREE.Vector3();
+        this.fxRandomBasis(u, v);
+        const rad = R * (8.5 + Math.random() * 5);
+        const ang = Math.random() * Math.PI * 2;
+        grp.position.set(u.x*Math.cos(ang)*rad + v.x*Math.sin(ang)*rad, u.y*Math.cos(ang)*rad + v.y*Math.sin(ang)*rad, u.z*Math.cos(ang)*rad + v.z*Math.sin(ang)*rad);
+        this.scene.add(grp);
+        this.planets.push({ grp, mat: rim.material as THREE.MeshBasicMaterial, ring, spin: (Math.random()-0.5)*0.004, u, v, r: rad, ang, speed: (0.0004 + Math.random()*0.0008)*(Math.random()<0.5?1:-1), flash: 0 });
+        // store body mat too for opacity (push a second entry? simpler: drive both via planet.flash loop using grp children)
+      }
+    }
+
+    // ── Rockets ── small craft on elliptical orbits; periodically dive at a
+    // planet (a flash on arrival), then resume orbiting. Engine + trail. —
+    {
+      const N = 4;
+      this.rocketTailPos = new Float32Array(N * 6);
+      this.rocketTailCol = new Float32Array(N * 6);
+      const tg = new THREE.BufferGeometry();
+      const tp = new THREE.BufferAttribute(this.rocketTailPos, 3); tp.setUsage(THREE.DynamicDrawUsage);
+      const tcl = new THREE.BufferAttribute(this.rocketTailCol, 3); tcl.setUsage(THREE.DynamicDrawUsage);
+      tg.setAttribute('position', tp); tg.setAttribute('color', tcl);
+      this.rocketTails = new THREE.LineSegments(tg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+      this.rocketTails.frustumCulled = false;
+      this.scene.add(this.rocketTails);
+      const hullMat = new THREE.MeshBasicMaterial({ color: 0x14202e, transparent: true, opacity: 0 });
+      const edgeC = new THREE.LineBasicMaterial({ color: 0x9ff4ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const engC = new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      this.rocketMats = [hullMat, edgeC, engC];
+      const L = R * 0.45;
+      const bodyGeo = new THREE.ConeGeometry(L * 0.18, L, 7);
+      bodyGeo.rotateX(Math.PI / 2);                 // nose +Z
+      const finGeo = new THREE.BoxGeometry(L * 0.5, L * 0.04, L * 0.22);
+      const hues: [number,number,number][] = [[0.6,0.95,1.0],[1.0,0.8,0.4],[0.7,1.0,0.85],[1.0,0.6,0.9]];
+      for (let i = 0; i < N; i++) {
+        const grp = new THREE.Group();
+        const body = new THREE.Mesh(bodyGeo, hullMat); grp.add(body);
+        grp.add(new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeo), edgeC));
+        const fin = new THREE.Mesh(finGeo, hullMat); fin.position.z = -L * 0.34; grp.add(fin);
+        grp.add(new THREE.LineSegments(new THREE.EdgesGeometry(finGeo), edgeC).translateZ(-L * 0.34));
+        const eng = new THREE.Mesh(new THREE.SphereGeometry(L * 0.13, 8, 6), engC); eng.position.z = -L * 0.5; grp.add(eng);
+        this.scene.add(grp);
+        this.rocketGroups.push({ grp, eng });
+        const u = new THREE.Vector3(), v = new THREE.Vector3();
+        this.fxRandomBasis(u, v);
+        this.rockets.push({ p: new THREE.Vector3(), u, v, a: R*(2.6+Math.random()*3), b: R*(4+Math.random()*4), ang: Math.random()*6.28, speed: (0.006+Math.random()*0.008)*(Math.random()<0.5?1:-1), mode: 'orbit', target: -1, cooldown: 200+Math.random()*500, hue: hues[i % hues.length] });
+      }
+    }
+
     // ── Density-wave rings ── expanding loops fired on each stone placement. —
     {
       const SEG = 64;
@@ -703,6 +791,61 @@ export class SphereRenderer {
       (this.cometTails.geometry.attributes['color'] as THREE.BufferAttribute).needsUpdate = true;
       this.cometHeadAttr!.needsUpdate = true;
       this.cometHeadCol!.needsUpdate = true;
+    }
+
+    // Planets: orbit slowly, spin, fade in; flash briefly when a rocket lands.
+    for (const pl of this.planets) {
+      pl.ang += pl.speed * f;
+      pl.grp.rotation.y += pl.spin * f;
+      pl.flash = Math.max(0, pl.flash - 0.03 * f);
+      const c = Math.cos(pl.ang) * pl.r, sn = Math.sin(pl.ang) * pl.r;
+      pl.grp.position.set(pl.u.x*c + pl.v.x*sn, pl.u.y*c + pl.v.y*sn, pl.u.z*c + pl.v.z*sn);
+      for (const ch of pl.grp.children) {
+        const mat = (ch as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        if (mat && 'opacity' in mat) mat.opacity = rev * (((ch as THREE.Mesh).material === pl.mat ? 0.8 : 1.0) + 1.2 * pl.flash);
+      }
+    }
+
+    // Rockets: orbit, periodically dive at a planet (flash on arrival), resume.
+    if (this.rocketTails && this.rocketGroups.length) {
+      for (const mat of this.rocketMats) (mat as THREE.MeshBasicMaterial).opacity = rev;
+      (this.rocketMats[0] as THREE.MeshBasicMaterial).opacity = rev * 0.9;
+      for (let i = 0; i < this.rockets.length; i++) {
+        const rk = this.rockets[i];
+        const rg = this.rocketGroups[i];
+        rk.cooldown -= f;
+        const prev = this._fxTmp2.copy(rk.p);
+        if (rk.mode === 'orbit') {
+          rk.ang += rk.speed * f;
+          const c = Math.cos(rk.ang) * rk.a, sn = Math.sin(rk.ang) * rk.b;
+          rk.p.set(rk.u.x*c + rk.v.x*sn, rk.u.y*c + rk.v.y*sn, rk.u.z*c + rk.v.z*sn);
+          if (rk.cooldown <= 0 && this.planets.length) { rk.mode = 'dive'; rk.target = (Math.random()*this.planets.length)|0; }
+        } else {
+          const pl = this.planets[rk.target];
+          const to = this._fxTmp.copy(pl.grp.position).sub(rk.p);
+          if (to.length() < R * 1.2) {
+            pl.flash = 1;                       // planet surges as the rocket lands
+            rk.mode = 'orbit'; rk.cooldown = 400 + Math.random()*800;
+            this.fxRandomBasis(rk.u, rk.v); rk.ang = Math.random()*6.28;
+          } else {
+            rk.p.addScaledVector(to.normalize(), R * 0.05 * f);
+          }
+        }
+        const fade = this.fxSilhouette(rk.p);
+        const hi = rev * fade;
+        rg.grp.position.copy(rk.p);
+        const vel = this._fxTmp.copy(rk.p).sub(prev);
+        if (vel.lengthSq() > 1e-6) rg.grp.lookAt(this._fxTmp2.copy(rk.p).add(vel));
+        rg.grp.visible = rev > 0.002 && fade > 0.3;
+        const o = i * 6;
+        const tail = this._fxTmp.copy(rk.p).sub(vel.multiplyScalar(18));
+        this.rocketTailPos[o]   = rk.p.x; this.rocketTailPos[o+1] = rk.p.y; this.rocketTailPos[o+2] = rk.p.z;
+        this.rocketTailPos[o+3] = tail.x; this.rocketTailPos[o+4] = tail.y; this.rocketTailPos[o+5] = tail.z;
+        this.rocketTailCol[o]   = rk.hue[0]*hi; this.rocketTailCol[o+1] = rk.hue[1]*hi; this.rocketTailCol[o+2] = rk.hue[2]*hi;
+        this.rocketTailCol[o+3] = 0; this.rocketTailCol[o+4] = 0; this.rocketTailCol[o+5] = 0;
+      }
+      (this.rocketTails.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
+      (this.rocketTails.geometry.attributes['color'] as THREE.BufferAttribute).needsUpdate = true;
     }
 
     // Density-wave rings expand and fade.

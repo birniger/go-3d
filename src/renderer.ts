@@ -221,7 +221,7 @@ export class Renderer {
   //    over — grid + light carpet + data rivers + monoliths + aurora. ────────
   private city: THREE.Group | null = null;
   private floorY = 0;
-  private RAIN_N = 420;
+  private RAIN_N = 760;
   private rainVel!:  Float32Array;
   private rainPos!:  THREE.BufferAttribute;
   private rainMat:   THREE.LineBasicMaterial | null = null;
@@ -230,7 +230,12 @@ export class Renderer {
   private gridMat:   THREE.LineBasicMaterial | null = null;
   private glowMat:   THREE.MeshBasicMaterial | null = null;
   private blockLayers: { mat: THREE.PointsMaterial; phase: number }[] = [];
-  private monoliths: { grp: THREE.Group; bodyMat: THREE.MeshBasicMaterial; edge: THREE.LineSegments; spin: number; phase: number; baseY: number }[] = [];
+  private monoliths: { grp: THREE.Group; bodyMat: THREE.MeshBasicMaterial; edge: THREE.LineSegments; spin: number; phase: number; baseY: number; dockFlash: number }[] = [];
+  // Live status boards (whose turn, stones, prisoners) — the void reports the game.
+  private signs: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; kind: 'turn' | 'stones' | 'prisoners' | 'id'; flick: number; speed: number }[] = [];
+  private capByBlack = 0;
+  private capByWhite = 0;
+  private _signDirty = true;
   private auroraMat: THREE.MeshBasicMaterial | null = null;
   private auroraTex: THREE.CanvasTexture | null = null;
   private droneAttr: THREE.BufferAttribute | null = null;
@@ -247,7 +252,7 @@ export class Renderer {
   private emberMat:  THREE.PointsMaterial | null = null;
   private pillars:   { mat: THREE.MeshBasicMaterial; phase: number; speed: number }[] = [];
   // Airships: small craft wandering the void; occasionally dock into a monolith.
-  private ships: { p: THREE.Vector3; v: THREE.Vector3; mode: 'cruise' | 'dock'; dock: THREE.Vector3;
+  private ships: { p: THREE.Vector3; v: THREE.Vector3; mode: 'cruise' | 'dock'; dock: THREE.Vector3; targetMono: number;
     cooldown: number; theta: number; w1: number; p1: number; w2: number; p2: number;
     speed: number; hue: [number, number, number] }[] = [];
   private shipTrailPos!: Float32Array;
@@ -629,6 +634,45 @@ export class Renderer {
     this.particles = this.rain as unknown as THREE.Points;
   }
 
+  /** Redraw the status boards from current game state (called each move). */
+  private refreshSignage(): void {
+    let b = 0, w = 0;
+    for (const e of this.stoneEntries) (e.player === 1 ? b++ : w++);
+    const turnBlack = this.game.currentPlayer === 1;
+    for (const sg of this.signs) {
+      const ctx = sg.ctx;
+      ctx.clearRect(0, 0, 256, 128);
+      ctx.fillStyle = 'rgba(4,8,14,0.92)'; ctx.fillRect(0, 0, 256, 128);
+      const accent = sg.kind === 'turn' ? (turnBlack ? '#00e5ff' : '#ff2d8a')
+                   : sg.kind === 'prisoners' ? '#ff7a3c' : '#19f5a0';
+      ctx.strokeStyle = accent; ctx.lineWidth = 3; ctx.strokeRect(4, 4, 248, 120);
+      ctx.fillStyle = 'rgba(120,135,160,0.85)'; ctx.font = '13px monospace'; ctx.textAlign = 'left';
+      const drawDual = (label: string, lhs: string, rhs: string) => {
+        ctx.fillStyle = 'rgba(120,135,160,0.8)'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(label, 128, 32);
+        ctx.font = 'bold 30px monospace';
+        ctx.fillStyle = '#7af0ff'; ctx.textAlign = 'left';  ctx.fillText('\u25CF ' + lhs, 22, 86);
+        ctx.fillStyle = '#ff8fb6'; ctx.textAlign = 'right'; ctx.fillText(rhs + ' \u25CB', 234, 86);
+      };
+      if (sg.kind === 'turn') {
+        ctx.fillStyle = accent; ctx.font = 'bold 26px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(turnBlack ? '\u25CF BLACK' : '\u25CB WHITE', 128, 58);
+        ctx.fillStyle = 'rgba(180,195,215,0.85)'; ctx.font = '16px monospace';
+        ctx.fillText('TO MOVE', 128, 92);
+      } else if (sg.kind === 'stones') {
+        drawDual('STONES ON BOARD', String(b), String(w));
+      } else if (sg.kind === 'prisoners') {
+        drawDual('PRISONERS', String(this.capByBlack), String(this.capByWhite));
+      } else {
+        ctx.fillStyle = '#19f5a0'; ctx.font = 'bold 30px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('GO\u00B73D', 128, 56);
+        ctx.fillStyle = 'rgba(180,195,215,0.8)'; ctx.font = '15px monospace';
+        ctx.fillText(this.game.size + '\u00B3 \u00B7 NET', 128, 90);
+      }
+      sg.tex.needsUpdate = true;
+    }
+  }
+
   /** THE DATASCAPE — an infinite computational plane the construct hovers
    *  over. Built from what this engine renders beautifully: thousands of small
    *  glowing things. Grid + light carpet (city blocks from altitude) + glow
@@ -769,44 +813,41 @@ export class Renderer {
         }));
       grp.add(edge);
       city.add(grp);
-      this.monoliths.push({ grp, bodyMat, edge, spin: (Math.random() - 0.5) * 0.0012, phase: Math.random() * 6.28, baseY });
+      this.monoliths.push({ grp, bodyMat, edge, spin: (Math.random() - 0.5) * 0.0012, phase: Math.random() * 6.28, baseY, dockFlash: 0 });
     }
 
-    // — Signage: the megacorp boards, two mounted on monoliths, one floating —
-    const ADS: [string, string, string][] = [
-      ['白石電気', 'SHIROISHI ELECTRIC', '#00e5ff'],
-      ['天元重工', 'TENGEN HEAVY IND.', '#ff0077'],
-      ['コミ 6.5', 'KOMI SYNTHETICS', '#19f5a0'],
+    // — Status boards: a small array of HUD panels reporting the live game —
+    // whose move it is, stones on the board, prisoners taken. Distributed (some
+    // mounted on monoliths, some floating) so the void reads as instrumented,
+    // not one lone billboard. Redrawn from game state on every move.
+    const signSpec: { kind: 'turn' | 'stones' | 'prisoners' | 'id'; mono: number }[] = [
+      { kind: 'turn',      mono: 0  },
+      { kind: 'stones',    mono: 2  },
+      { kind: 'prisoners', mono: -1 },
+      { kind: 'id',        mono: -1 },
     ];
-    ADS.forEach(([kanji, latin, hex], i) => {
+    signSpec.forEach((spec, i) => {
       const ac = document.createElement('canvas'); ac.width = 256; ac.height = 128;
-      const ag = ac.getContext('2d')!;
-      ag.fillStyle = 'rgba(4,8,14,0.94)'; ag.fillRect(0, 0, 256, 128);
-      ag.strokeStyle = hex; ag.lineWidth = 3; ag.strokeRect(4, 4, 248, 120);
-      ag.fillStyle = hex; ag.font = 'bold 44px sans-serif'; ag.textAlign = 'center';
-      ag.fillText(kanji, 128, 62);
-      ag.font = '16px monospace'; ag.fillStyle = 'rgba(205,214,228,0.85)';
-      ag.fillText(latin, 128, 96);
-      const mat = new THREE.MeshBasicMaterial({
-        map: new THREE.CanvasTexture(ac), transparent: true, opacity: 0,
-        side: THREE.DoubleSide, depthWrite: false,
-      });
+      const ctx = ac.getContext('2d')!;
+      const tex = new THREE.CanvasTexture(ac);
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size * 2.6, size * 1.3), mat);
-      if (i < 2 && this.monoliths[i * 2]) {
-        // Mounted on a monolith face like building signage.
-        const m = this.monoliths[i * 2];
-        mesh.position.set(0, size * (1.5 - i), ((m.grp.children[0] as THREE.Mesh).geometry as THREE.BoxGeometry).parameters.depth / 2 + 0.3);
+      const m = spec.mono >= 0 ? this.monoliths[spec.mono] : null;
+      if (m) {
+        const depth = ((m.grp.children[0] as THREE.Mesh).geometry as THREE.BoxGeometry).parameters.depth;
+        mesh.position.set(0, size * (1.4 - i * 0.6), depth / 2 + 0.3);
         m.grp.add(mesh);
       } else {
-        const ang = 2.2, rad = size * 9;
-        mesh.position.set(Math.cos(ang) * rad, size * 0.5, Math.sin(ang) * rad);
+        const ang = 1.4 + i * 2.0, rad = size * (7 + (i % 2) * 1.6);
+        mesh.position.set(Math.cos(ang) * rad, size * (0.2 + (i % 2) * 1.4), Math.sin(ang) * rad);
         mesh.lookAt(0, mesh.position.y, 0);
         city.add(mesh);
       }
-      this.adboards.push({ mesh, mat, flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05 });
+      this.signs.push({ mesh, mat, ctx, tex, kind: spec.kind, flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05 });
     });
+    this.refreshSignage();
 
-    // — Aurora: a slow-scrolling colour band that fills the upper void —
+    // — Aurora: a slow-scrolling colour band that fills the upper void —    // — Aurora: a slow-scrolling colour band that fills the upper void —
     {
       const ac = document.createElement('canvas'); ac.width = 512; ac.height = 128;
       const ag = ac.getContext('2d')!;
@@ -1015,7 +1056,7 @@ export class Renderer {
         const a = Math.random() * Math.PI * 2;
         this.ships.push({
           p: new THREE.Vector3(Math.cos(a) * size * 8, floorY + size * (2 + Math.random() * 4), Math.sin(a) * size * 8),
-          v: new THREE.Vector3(), mode: 'cruise', dock: new THREE.Vector3(),
+          v: new THREE.Vector3(), mode: 'cruise', dock: new THREE.Vector3(), targetMono: -1,
           cooldown: 300 + Math.random() * 900,
           theta: Math.random() * Math.PI * 2,
           w1: 0.005 + Math.random() * 0.01, p1: Math.random() * 6.28,
@@ -1592,6 +1633,8 @@ export class Renderer {
     const lm = this.game.lastMove;
     const burstColor = player === 1 ? 0x0077ff : 0xff0077;
     this.riverFlash = 1;   // the datascape's rivers run red for a moment
+    if (player === 1) this.capByBlack += positions.length; else this.capByWhite += positions.length;
+    this._signDirty = true;
     for (const [x, y, z] of positions) {
       const mesh = this._getCaptureMesh(player);
       mesh.position.set(this.coord(x), this.coord(y), this.coord(z));
@@ -1607,6 +1650,7 @@ export class Renderer {
 
   updateStones() {
     this._rebuildStones();
+    if (this.signs.length) this.refreshSignage();
     if (this.game.lastMove && !REDUCED_MOTION) {
       const [x, y, z] = this.game.lastMove;
       this.popInMap.set(`${x},${y},${z}`, 0.05);
@@ -2177,7 +2221,7 @@ export class Renderer {
       const top = this.game.size * 6, floor = -this.game.size * 3.2;
       for (let i = 0; i < this.rainVel.length; i++) {
         const v = this.rainVel[i] * f;
-        const dx = -0.18 * v, dy = -v, dz = -0.10 * v;
+        const dx = -0.16 * v, dy = -v, dz = -0.08 * v;
         arr[i*6]   += dx; arr[i*6+1] += dy; arr[i*6+2] += dz;
         arr[i*6+3] += dx; arr[i*6+4] += dy; arr[i*6+5] += dz;
         if (arr[i*6+1] < floor) {
