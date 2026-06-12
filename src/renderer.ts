@@ -241,6 +241,11 @@ export class Renderer {
   private meteorMat: THREE.LineBasicMaterial | null = null;
   private meteorState = { active: false, life: 0, max: 240, p: new THREE.Vector3(), v: new THREE.Vector3() };
   private riverFlash = 0;
+  // Mid-air layers: rising data embers + light pillars climbing from the carpet.
+  private emberAttr: THREE.BufferAttribute | null = null;
+  private emberVel!: Float32Array;
+  private emberMat:  THREE.PointsMaterial | null = null;
+  private pillars:   { mat: THREE.MeshBasicMaterial; phase: number; speed: number }[] = [];
   // Music-synced glow (beat bus) + connection-loss dimming.
   private _beatGlow   = 0;
   private _signalLost = false;
@@ -719,12 +724,32 @@ export class Renderer {
       const h = size * (7 + Math.random() * 7);
       const d = size * (0.8 + Math.random() * 0.8);
       const ang = (i / 5) * Math.PI * 2 + Math.random() * 0.5;
-      const rad = size * (9 + Math.random() * 6);
+      const rad = size * (6.5 + Math.random() * 5);
       const baseY = floorY + h / 2 + size * (0.5 + Math.random() * 2.5);
       const grp = new THREE.Group();
       grp.position.set(Math.cos(ang) * rad, baseY, Math.sin(ang) * rad);
       grp.rotation.y = Math.random() * Math.PI;
-      const bodyMat = new THREE.MeshBasicMaterial({ color: 0x0a0f1c, transparent: true, opacity: 0 });
+      // Self-lit slabs: a generated circuit-trace texture makes the monoliths
+      // read at any distance — 1px edge lines alone vanish (lesson learned).
+      const tc = document.createElement('canvas'); tc.width = 128; tc.height = 256;
+      const tg = tc.getContext('2d')!;
+      tg.fillStyle = '#05070e'; tg.fillRect(0, 0, 128, 256);
+      for (let col = 6; col < 122; col += 9 + (Math.random() * 6 | 0)) {
+        const hue = Math.random() < 0.82 ? '0,229,255' : '255,0,119';
+        let y = Math.random() * 40;
+        while (y < 250) {
+          const seg = 12 + Math.random() * 50;
+          if (Math.random() < 0.72) {
+            tg.fillStyle = `rgba(${hue},${0.25 + Math.random() * 0.6})`;
+            tg.fillRect(col, y, 2, seg);
+            if (Math.random() < 0.4) { tg.fillStyle = `rgba(${hue},0.95)`; tg.fillRect(col - 1, y + seg - 3, 4, 3); }
+          }
+          y += seg + 4 + Math.random() * 26;
+        }
+      }
+      const bodyMat = new THREE.MeshBasicMaterial({
+        map: new THREE.CanvasTexture(tc), transparent: true, opacity: 0, depthWrite: false,
+      });
       const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
       grp.add(body);
       const edge = new THREE.LineSegments(
@@ -781,7 +806,7 @@ export class Renderer {
         const grad = ag.createLinearGradient(0, y, 0, y + hh);
         const hue = b % 2 ? 'rgba(0,229,255,' : 'rgba(255,0,119,';
         grad.addColorStop(0, hue + '0)');
-        grad.addColorStop(0.5, hue + (0.10 + Math.random() * 0.10) + ')');
+        grad.addColorStop(0.5, hue + (0.22 + Math.random() * 0.16) + ')');
         grad.addColorStop(1, hue + '0)');
         ag.fillStyle = grad; ag.fillRect(0, y, 512, hh);
       }
@@ -800,7 +825,7 @@ export class Renderer {
     // — Drone flock: organic lissajous weave against the geometric city —
     {
       const N = 16;
-      this.droneCenter.set(size * 8, size * 2, -size * 6);
+      this.droneCenter.set(size * 5.5, size * 2.5, -size * 4.5);
       const pos = new Float32Array(N * 3);
       for (let i = 0; i < N; i++) {
         this.droneParams.push({
@@ -814,12 +839,69 @@ export class Renderer {
       this.droneAttr.setUsage(THREE.DynamicDrawUsage);
       geo.setAttribute('position', this.droneAttr);
       this.droneMat = new THREE.PointsMaterial({
-        color: 0xbfeaff, size: size * 0.055, transparent: true, opacity: 0,
+        color: 0xbfeaff, size: size * 0.1, transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false,
       });
       const pts = new THREE.Points(geo, this.droneMat);
       pts.frustumCulled = false;
       city.add(pts);
+    }
+
+    // — Rising data embers: the air itself is alive. A sparse field of motes
+    //   drifting up through the whole void volume, wrapping at the top. —
+    {
+      const N = 400;
+      const pos = new Float32Array(N * 3);
+      this.emberVel = new Float32Array(N);
+      const guard = ((size - 1) / 2) * 2.4;
+      for (let i = 0; i < N; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const rr = guard + Math.random() * size * 14;
+        pos[i*3]   = Math.cos(a) * rr;
+        pos[i*3+1] = floorY + Math.random() * size * 8;
+        pos[i*3+2] = Math.sin(a) * rr;
+        this.emberVel[i] = 0.015 + Math.random() * 0.04;
+      }
+      const geo = new THREE.BufferGeometry();
+      this.emberAttr = new THREE.Float32BufferAttribute(pos, 3) as THREE.BufferAttribute;
+      this.emberAttr.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('position', this.emberAttr);
+      this.emberMat = new THREE.PointsMaterial({
+        color: 0x66d8ee, size: size * 0.05, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const pts = new THREE.Points(geo, this.emberMat);
+      pts.frustumCulled = false;
+      city.add(pts);
+    }
+
+    // — Light pillars: shafts climbing from the brightest carpet clusters into
+    //   the sky, bridging floor and aurora so the middle is never empty. —
+    {
+      const pc = document.createElement('canvas'); pc.width = 32; pc.height = 128;
+      const pg = pc.getContext('2d')!;
+      const pgrad = pg.createLinearGradient(0, 128, 0, 0);
+      pgrad.addColorStop(0, 'rgba(0,229,255,0.5)');
+      pgrad.addColorStop(0.4, 'rgba(0,229,255,0.16)');
+      pgrad.addColorStop(1, 'rgba(0,229,255,0)');
+      pg.fillStyle = pgrad; pg.fillRect(0, 0, 32, 128);
+      const ptex = new THREE.CanvasTexture(pc);
+      for (let i = 0; i < 10; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const rr = size * (4 + Math.random() * 12);
+        const h = size * (3 + Math.random() * 5);
+        const mat = new THREE.MeshBasicMaterial({
+          map: ptex, transparent: true, opacity: 0, side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        });
+        const grp = new THREE.Group();
+        const p1 = new THREE.Mesh(new THREE.PlaneGeometry(size * 0.4, h), mat);
+        const p2 = p1.clone(); p2.rotation.y = Math.PI / 2;
+        grp.add(p1, p2);
+        grp.position.set(Math.cos(a) * rr, floorY + h / 2, Math.sin(a) * rr);
+        city.add(grp);
+        this.pillars.push({ mat, phase: Math.random() * 6.28, speed: 0.012 + Math.random() * 0.02 });
+      }
     }
 
     // — Meteor: a rare bright streak across the deep sky —
@@ -1145,7 +1227,7 @@ export class Renderer {
       m.grp.rotation.y += m.spin * f;
       m.grp.position.y = m.baseY + Math.sin(this.hoverPhase * 0.06 + m.phase) * this.game.size * 0.5;
       m.bodyMat.opacity = rev * 0.96;
-      (m.edge.material as THREE.LineBasicMaterial).opacity = rev * (0.8 + 0.2 * Math.sin(this.hoverPhase * 0.2 + m.phase));
+      (m.edge.material as THREE.LineBasicMaterial).opacity = rev;
     }
     for (const ad of this.adboards) {
       ad.flick += ad.speed * f;
@@ -1153,9 +1235,27 @@ export class Renderer {
       ad.mat.opacity = rev * Math.max(0.12, 0.55 + 0.25 * Math.abs(Math.sin(ad.flick * 1.7)) - glitch);
     }
 
+    // — Rising embers —
+    if (this.emberAttr && this.emberMat) {
+      this.emberMat.opacity = rev * 0.65;
+      const arr = this.emberAttr.array as Float32Array;
+      const top = this.floorY + this.game.size * 8;
+      for (let i = 0; i < this.emberVel.length; i++) {
+        arr[i*3+1] += this.emberVel[i] * f;
+        if (arr[i*3+1] > top) arr[i*3+1] = this.floorY;
+      }
+      this.emberAttr.needsUpdate = true;
+    }
+
+    // — Light pillars breathe asynchronously —
+    for (const pl of this.pillars) {
+      pl.phase += pl.speed * f;
+      pl.mat.opacity = rev * (0.30 + 0.22 * Math.sin(pl.phase));
+    }
+
     // — Aurora scroll —
     if (this.auroraTex) this.auroraTex.offset.x += 0.00018 * f;
-    if (this.auroraMat) this.auroraMat.opacity = rev * 0.5;
+    if (this.auroraMat) this.auroraMat.opacity = rev * 0.75;
 
     // — Drone flock weaving lissajous paths —
     if (this.droneAttr) {
