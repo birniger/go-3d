@@ -23,13 +23,10 @@ type Voice = { osc: OscillatorNode; gain: GainNode };
  * Beat bus: the procedural scheduler KNOWS when every note will sound, so the
  * renderer can sync visuals to the music with zero audio analysis. Events carry
  * a performance.now()-comparable timestamp; the renderer consumes those that
- * have come due each frame. `cityMix` flows the other way: the renderer writes
- * the void-reveal amount (0..1) and the music fades a rain/city-hum noise bed
- * in as you dolly out into the void.
+ * have come due each frame.
  */
 export const musicBus = {
   events: [] as { at: number; kind: 'bar' | 'bass' | 'arp' }[],
-  cityMix: 0,
 };
 
 export class MusicSystem {
@@ -52,9 +49,6 @@ export class MusicSystem {
   private readonly bpm = 82;
 
   private toggleEl: HTMLButtonElement | null = null;
-  // Rain/city-hum bed, mixed by musicBus.cityMix (renderer-driven).
-  private citySrc:  AudioBufferSourceNode | null = null;
-  private cityGain: GainNode | null = null;
 
   constructor() {
     this.enabled = localStorage.getItem('go3d_music') !== 'off'; // default on
@@ -172,25 +166,6 @@ export class MusicSystem {
       this.pad.push({ osc, gain: g });
     });
 
-    // Rain/city hum: looping filtered noise, silent until the renderer raises
-    // musicBus.cityMix (i.e. you zoom out into the void).
-    {
-      const len = 2 * c.sampleRate;
-      const buf = c.createBuffer(1, len, c.sampleRate);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-      const src = c.createBufferSource();
-      src.buffer = buf; src.loop = true;
-      const hiss = c.createBiquadFilter(); hiss.type = 'bandpass'; hiss.frequency.value = 3200; hiss.Q.value = 0.4;
-      const hum  = c.createBiquadFilter(); hum.type  = 'lowpass';  hum.frequency.value = 240;
-      const g = c.createGain(); g.gain.value = 0.0001;
-      src.connect(hiss); hiss.connect(g);
-      src.connect(hum);  hum.connect(g);
-      g.connect(master);
-      src.start();
-      this.citySrc = src; this.cityGain = g;
-    }
-
     // Kick off the note scheduler.
     this.nextStepTime = c.currentTime + 0.15;
     this.step = 0;
@@ -212,11 +187,10 @@ export class MusicSystem {
       master.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
     }
     // Tear the graph down after the fade so we don't leak oscillators.
-    const pad = this.pad, lfo = this.lfo, city = this.citySrc;
-    this.citySrc = null; this.cityGain = null;
+    const pad = this.pad, lfo = this.lfo;
     this.teardownId = window.setTimeout(() => {
       this.teardownId = null;
-      try { pad.forEach(v => v.osc.stop()); lfo?.stop(); city?.stop(); } catch { /* already stopped */ }
+      try { pad.forEach(v => v.osc.stop()); lfo?.stop(); } catch { /* already stopped */ }
       master?.disconnect();
     }, 900);
     this.pad = [];
@@ -237,11 +211,6 @@ export class MusicSystem {
     // step clock can fall behind the audio clock; scheduling those past-due
     // notes would smear them all at once "now". Skip ahead instead.
     if (this.nextStepTime < c.currentTime) this.nextStepTime = c.currentTime + 0.05;
-    // Follow the renderer's void reveal with the rain/city bed.
-    if (this.cityGain) {
-      const target = Math.max(0.0001, musicBus.cityMix * 0.075);
-      this.cityGain.gain.linearRampToValueAtTime(target, c.currentTime + 0.12);
-    }
     while (this.nextStepTime < c.currentTime + 0.12) {
       this.scheduleStep(this.step, this.nextStepTime);
       this.nextStepTime += stepDur;
