@@ -457,7 +457,11 @@ export class GameSession {
       onPlayerJoined: p  => this.handlePlayerJoined(p),
       onError:        m  => showToast(m, 'error'),
       onClockTick:    (p1, p2) => this.clockDisplay.update(this.currentTurn, p1, p2),
-      onConnectionStatus: s => setConnectionStatus(s),
+      onConnectionStatus: s => {
+        setConnectionStatus(s);
+        // Connection-loss ambience: the scene dims while reconnecting.
+        this.renderer.setSignalLost(s === 'reconnecting');
+      },
       onUndoRequest:  p  => void this.handleUndoRequest(p),
       onUndoApplied:  s  => this.reloadFromUndo(s),
       onUndoDeclined: () => showToast('Undo request declined.', 'info'),

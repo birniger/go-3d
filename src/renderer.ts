@@ -4,6 +4,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { Go3D, Player, Cell, TerritoryResult } from './game';
+import { musicBus } from './music';
 
 // Touch devices (phones/tablets) get a lower render resolution and a capped
 // frame rate: the bloom post-processing pipeline is fragment-bound, so on a
@@ -216,6 +217,21 @@ export class Renderer {
   private _vh = window.innerHeight;
   private ringPalette = [0x00e5ff, 0xff0077, 0x1affa0];
 
+  // ── Megacity void (1.5.0): rain, skyline, smog horizon, adboards, traffic ──
+  private rainVel!:  Float32Array;
+  private rainPos!:  THREE.BufferAttribute;
+  private towers:    THREE.InstancedMesh | null = null;
+  private towerMat:  THREE.MeshBasicMaterial | null = null;
+  private smog:      THREE.Mesh | null = null;
+  private smogMat:   THREE.MeshBasicMaterial | null = null;
+  private adboards:  { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; flick: number; speed: number }[] = [];
+  // Music-synced glow (beat bus) + connection-loss dimming.
+  private _beatGlow   = 0;
+  private _signalLost = false;
+  private _bloomPass: UnrealBloomPass | null = null;
+  private _gridColor  = new THREE.Color(GRID_I);
+  private _gridTarget = new THREE.Color(GRID_I);
+
   // Line meshes whose vertices are faded per-frame against the view-aligned
   // exclusion tunnel, so no segment ever draws over the cube's footprint —
   // from ANY camera angle. Each entry carries the mesh, its local vertex
@@ -318,6 +334,7 @@ export class Renderer {
     this.buildBoard();
     this.initParticles();
     this.initVoidFX();
+    this.initCityVoid();
     this.initStones();
     this.initTerritory();
     this.initEffects();
@@ -372,7 +389,8 @@ export class Renderer {
     const w = window.innerWidth, h = window.innerHeight;
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 1.1, 0.55, 0.28));
+    this._bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 1.1, 0.55, 0.28);
+    this.composer.addPass(this._bloomPass);
   }
 
   private initLights() {
@@ -544,21 +562,110 @@ export class Renderer {
 
   // ── Particles ─────────────────────────────────────────────────────────────
   private initParticles() {
+    // Neon rain (cyberpunk weather, replaces the old space dust): columns of
+    // falling points in an annulus around the play volume — never inside it.
     const n = 600, pos = new Float32Array(n * 3), r = this.game.size * 5;
-    const guard = ((this.game.size - 1) / 2) * 1.85;   // keep dust out of the play volume
+    const guard = ((this.game.size - 1) / 2) * 2.1;
+    this.rainVel = new Float32Array(n);
     for (let i = 0; i < n; i++) {
-      const p = this._tmpV.set(
-        (Math.random() - 0.5) * 2 * r,
-        (Math.random() - 0.5) * 2 * r,
-        (Math.random() - 0.5) * 2 * r);
-      if (p.length() < guard) p.setLength(guard + Math.random() * r);  // push inward dust outward
-      pos[i*3] = p.x; pos[i*3+1] = p.y; pos[i*3+2] = p.z;
+      const ang = Math.random() * Math.PI * 2;
+      const rad = guard + Math.random() * r;
+      pos[i*3]   = Math.cos(ang) * rad;
+      pos[i*3+1] = (Math.random() - 0.5) * 2 * r;
+      pos[i*3+2] = Math.sin(ang) * rad;
+      this.rainVel[i] = 0.10 + Math.random() * 0.16;
     }
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    this.rainPos = new THREE.Float32BufferAttribute(pos, 3) as THREE.BufferAttribute;
+    this.rainPos.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.rainPos);
     this.particles = new THREE.Points(geo,
-      new THREE.PointsMaterial({ color: 0x003344, size: 0.05, transparent: true, opacity: 0.55 }));
+      new THREE.PointsMaterial({ color: 0x2a4a55, size: 0.055, transparent: true, opacity: 0.5 }));
     this.scene.add(this.particles);
+  }
+
+  /** Skyline towers + smog horizon + holographic adboards, all fxReveal-gated. */
+  private initCityVoid() {
+    const size = this.game.size;
+    const floorY = -size * 2.8;
+
+    // — Towers: one instanced box, lit-window canvas texture shared by all —
+    const wc = document.createElement('canvas'); wc.width = 64; wc.height = 128;
+    const wg = wc.getContext('2d')!;
+    wg.fillStyle = '#04060c'; wg.fillRect(0, 0, 64, 128);
+    for (let y = 6; y < 122; y += 7) {
+      for (let x = 5; x < 57; x += 9) {
+        if (Math.random() < 0.30) {
+          wg.fillStyle = Math.random() < 0.78 ? 'rgba(0,229,255,0.75)' : 'rgba(255,170,60,0.8)';
+          wg.fillRect(x, y, 4, 3);
+        }
+      }
+    }
+    const wtex = new THREE.CanvasTexture(wc);
+    this.towerMat = new THREE.MeshBasicMaterial({ map: wtex, transparent: true, opacity: 0, depthWrite: false });
+    const TOWER_N = 46;
+    this.towers = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), this.towerMat, TOWER_N);
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < TOWER_N; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const rad = size * (7 + Math.random() * 5);
+      const h   = size * (1.6 + Math.random() * 3.2);
+      const w   = size * (0.5 + Math.random() * 0.7);
+      dummy.position.set(Math.cos(ang) * rad, floorY + h / 2, Math.sin(ang) * rad);
+      dummy.scale.set(w, h, w);
+      dummy.rotation.y = Math.random() * Math.PI;
+      dummy.updateMatrix();
+      this.towers.setMatrixAt(i, dummy.matrix);
+    }
+    this.scene.add(this.towers);
+
+    // — Smog horizon: inward-facing cylinder with a sodium-orange gradient —
+    // the warm third colour every cyberpunk frame has, confined to the far void.
+    const sc = document.createElement('canvas'); sc.width = 4; sc.height = 128;
+    const sg = sc.getContext('2d')!;
+    const grad = sg.createLinearGradient(0, 0, 0, 128);
+    grad.addColorStop(0.0, 'rgba(194,65,12,0)');
+    grad.addColorStop(0.72, 'rgba(194,65,12,0.16)');
+    grad.addColorStop(0.94, 'rgba(255,122,24,0.42)');
+    grad.addColorStop(1.0, 'rgba(255,140,40,0.5)');
+    sg.fillStyle = grad; sg.fillRect(0, 0, 4, 128);
+    const stex = new THREE.CanvasTexture(sc);
+    this.smogMat = new THREE.MeshBasicMaterial({
+      map: stex, transparent: true, opacity: 0, side: THREE.BackSide,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.smog = new THREE.Mesh(
+      new THREE.CylinderGeometry(size * 13, size * 13, size * 5, 36, 1, true), this.smogMat);
+    this.smog.position.y = floorY + size * 1.6;
+    this.scene.add(this.smog);
+
+    // — Holographic adboards: invented Go-megacorp signage, occasional glitch —
+    const ADS: [string, string, string][] = [
+      ['白石電気', 'SHIROISHI ELECTRIC', '#00e5ff'],
+      ['天元重工', 'TENGEN HEAVY IND.', '#ff0077'],
+      ['コミ 6.5', 'KOMI SYNTHETICS', '#19f5a0'],
+    ];
+    ADS.forEach(([kanji, latin, hex], i) => {
+      const ac = document.createElement('canvas'); ac.width = 256; ac.height = 128;
+      const ag = ac.getContext('2d')!;
+      ag.fillStyle = 'rgba(4,8,14,0.92)'; ag.fillRect(0, 0, 256, 128);
+      ag.strokeStyle = hex; ag.lineWidth = 3; ag.strokeRect(4, 4, 248, 120);
+      ag.fillStyle = hex; ag.font = 'bold 44px sans-serif'; ag.textAlign = 'center';
+      ag.fillText(kanji, 128, 62);
+      ag.font = '16px monospace'; ag.fillStyle = 'rgba(205,214,228,0.85)';
+      ag.fillText(latin, 128, 96);
+      const tex = new THREE.CanvasTexture(ac);
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size * 2.4, size * 1.2), mat);
+      const ang = (i / ADS.length) * Math.PI * 2 + 0.7;
+      const rad = size * (5.6 + i * 0.9);
+      mesh.position.set(Math.cos(ang) * rad, size * (-0.6 + i * 0.9), Math.sin(ang) * rad);
+      mesh.lookAt(0, mesh.position.y, 0);
+      this.scene.add(mesh);
+      this.adboards.push({ mesh, mat, flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05 });
+    });
   }
 
   // An exterior "containment rig" orbiting the play volume. A keep-out sphere
@@ -824,32 +931,24 @@ export class Renderer {
     }
   }
 
-  /** (Re)spawn streak i on a great-circle arc on an outer shell, camera-facing. */
+  /** (Re)spawn streak i as TRAFFIC: a light-trail on one of the elevated
+   *  highway lanes circling below the board. Direction decides the colour —
+   *  headlights (cool white-cyan) one way, taillights (red) the other. */
   private spawnStreak(i: number, lifeOffset = 0) {
     const s = this.streakState[i];
-    this._camDir.copy(this.camera.position).normalize();
-    if (this._camDir.lengthSq() < 1e-4) this._camDir.set(1, 0.6, 1).normalize();
-    const d = this._tmpV.set(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
-    if (d.lengthSq() < 1e-3) d.set(0, 1, 0);
-    d.normalize();
-    let dot = d.dot(this._camDir);
-    if (dot < 0) { d.addScaledVector(this._camDir, -2 * dot); d.normalize(); dot = d.dot(this._camDir); }
-    if (dot > 0.7) { d.addScaledVector(this._camDir, -(dot - 0.45)); d.normalize(); }
-    // Shell radius safely outside the keep-out sphere.
-    const R = this.keepR * (1.08 + Math.random() * 1.05);
-    s.p.copy(d).multiplyScalar(R);
-    // Rotation axis ⟂ position → motion stays on the shell (constant radius).
-    s.axis.copy(this._tmpV2.set(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1)).cross(d);
-    if (s.axis.lengthSq() < 1e-3) s.axis.set(0, 1, 0);
-    s.axis.normalize();
-    const fast = Math.random() < 0.4;
-    s.omega = (fast ? 0.012 + Math.random()*0.012 : 0.004 + Math.random()*0.006) * (Math.random() < 0.5 ? 1 : -1);
+    const lane = (Math.random() * 5) | 0;
+    const R    = this.keepR * (1.35 + lane * 0.5);
+    const yLn  = -this.game.size * (1.1 + lane * 0.42);
+    const ang  = Math.random() * Math.PI * 2;
+    s.p.set(Math.cos(ang) * R, yLn, Math.sin(ang) * R);
+    s.axis.set(0, 1, 0);
+    const dir  = lane % 2 === 0 ? 1 : -1;          // alternating lane directions
+    const fast = Math.random() < 0.35;
+    s.omega = (fast ? 0.010 + Math.random() * 0.010 : 0.004 + Math.random() * 0.005) * dir;
     s.life = -lifeOffset;
-    s.max = fast ? 60 + Math.random()*50 : 110 + Math.random()*130;
-    const roll = Math.random();
-    if (roll < 0.5)      { s.r = 0.0; s.g = 0.9; s.b = 1.0; }
-    else if (roll < 0.85){ s.r = 1.0; s.g = 0.0; s.b = 0.47; }
-    else                 { s.r = 0.1; s.g = 1.0; s.b = 0.63; }
+    s.max  = fast ? 70 + Math.random() * 60 : 130 + Math.random() * 150;
+    if (dir > 0) { s.r = 0.75; s.g = 0.95; s.b = 1.0; }       // headlights
+    else         { s.r = 1.0;  s.g = 0.12; s.b = 0.08; }      // taillights
   }
 
   /** Hide/show every void-rig object (reduced-motion keeps the rig dark). */
@@ -859,7 +958,13 @@ export class Renderer {
     for (const g of this.glyphs) g.spr.visible = v;
     for (const r of this.rings) r.node.visible = v;
     for (const p of this.pulses) p.mesh.visible = false;
+    if (this.towers) this.towers.visible = v;
+    if (this.smog) this.smog.visible = v;
+    for (const ad of this.adboards) ad.mesh.visible = v;
   }
+
+  /** Connection-loss ambience: the world dims while we're reconnecting. */
+  setSignalLost(lost: boolean) { this._signalLost = lost; }
 
   private updateVoidFX(f: number) {
     this._camDir.copy(this.camera.position).normalize();
@@ -873,6 +978,16 @@ export class Renderer {
       const start = this.game.size * 2.7, full = this.game.size * 4.6;
       const t = Math.min(1, Math.max(0, (dist - start) / (full - start)));
       this.fxReveal = t * t * (3 - 2 * t);            // smoothstep
+    }
+
+    // — Megacity layer: skyline, smog horizon, adboards (all reveal-gated) —
+    if (this.towerMat) this.towerMat.opacity = this.fxReveal * 0.92;
+    if (this.smogMat)  this.smogMat.opacity  = this.fxReveal * 0.85;
+    for (const ad of this.adboards) {
+      ad.flick += ad.speed * f;
+      const glitch = Math.random() < 0.012 ? 0.45 : 0;
+      ad.mat.opacity = this.fxReveal * Math.max(0.12,
+        0.62 + 0.28 * Math.abs(Math.sin(ad.flick * 1.7)) - glitch);
     }
 
     // — Comet-streaks: rotate along the shell; trail is the prior arc point —
@@ -1672,13 +1787,43 @@ export class Renderer {
     // build layer reads clearly; otherwise it breathes at full strength.
     const stackFade = this.stackLayer !== null && this.sliceAxis === 'none';
     const breathe = REDUCED_MOTION ? 0 : Math.sin(this.hoverPhase * 0.18);
-    (this.innerGrid.material as THREE.LineBasicMaterial).opacity = stackFade
+    (this.innerGrid.material as THREE.LineBasicMaterial).opacity = Math.min(1, (stackFade
       ? 0.10 + 0.04 * breathe
-      : 0.55 + 0.35 * breathe;
+      : 0.55 + 0.35 * breathe) + 0.16 * this._beatGlow);
     (this.boundingBox.material as THREE.LineBasicMaterial).opacity = stackFade ? 0.22 : 1;
 
-    // Particle drift
-    if (!REDUCED_MOTION) this.particles.rotation.y += 0.0002 * f;
+    // Neon rain: fall and respawn at the top of the column.
+    if (!REDUCED_MOTION) {
+      const arr = this.rainPos.array as Float32Array;
+      const top = this.game.size * 5, floor = -this.game.size * 5;
+      for (let i = 0; i < this.rainVel.length; i++) {
+        arr[i*3+1] -= this.rainVel[i] * f;
+        if (arr[i*3+1] < floor) arr[i*3+1] = top;
+      }
+      this.rainPos.needsUpdate = true;
+    }
+
+    // Music beat bus: consume due events — bars/bass swell the lattice glow,
+    // bass downbeats also fire a sonar ring when the rig is awake.
+    while (musicBus.events.length && musicBus.events[0].at <= now) {
+      const e = musicBus.events.shift()!;
+      if (e.kind === 'bar')  this._beatGlow = 1;
+      else if (e.kind === 'bass') { this._beatGlow = Math.max(this._beatGlow, 0.55); this.pulseCooldown = Math.min(this.pulseCooldown, 0); }
+    }
+    this._beatGlow = Math.max(0, this._beatGlow - 0.035 * f);
+
+    // Turn-tinted lattice: the room subtly belongs to whoever is to move.
+    this._gridTarget.setHex(this.game.currentPlayer === 1 ? 0x00d5ff : 0xff2d8a);
+    this._gridColor.lerp(this._gridTarget, Math.min(1, 0.03 * f));
+    (this.innerGrid.material as THREE.LineBasicMaterial).color.copy(this._gridColor);
+
+    // Tell the music how revealed the void is (drives the rain/city-hum bed),
+    // and dim the world while the connection is lost.
+    musicBus.cityMix = this._signalLost ? 0 : this.fxReveal;
+    if (this._bloomPass) {
+      const target = this._signalLost ? 0.45 : 1.1;
+      this._bloomPass.strength += (target - this._bloomPass.strength) * Math.min(1, 0.08 * f);
+    }
     // Void rig: skip the whole update while it is invisible (fxReveal is 0 at
     // play framing) — previously every frame still rotated streaks, ran the
     // per-vertex silhouette fades, and uploaded four GPU buffers for a rig
