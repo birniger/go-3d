@@ -221,7 +221,7 @@ export class Renderer {
   //    over — grid + light carpet + data rivers + monoliths + aurora. ────────
   private city: THREE.Group | null = null;
   private floorY = 0;
-  private RAIN_N = 760;
+  private RAIN_N = 1100;
   private rainVel!:  Float32Array;
   private rainPos!:  THREE.BufferAttribute;
   private rainMat:   THREE.LineBasicMaterial | null = null;
@@ -611,14 +611,15 @@ export class Renderer {
       const rad = guard + Math.random() * r;
       const x = Math.cos(ang) * rad, z = Math.sin(ang) * rad;
       const y = (Math.random() - 0.5) * 2 * r;
-      const v = 0.34 + Math.random() * 0.30;          // fast — rain, not snow
-      const len = v * 5.5;
+      const v = 0.36 + Math.random() * 0.34;          // fast — rain, not snow
+      const len = v * (8 + Math.random() * 4);        // longer, varied streaks
       this.rainVel[i] = v;
-      // Shared wind slant (0.18, -1, 0.10): tail sits up-wind of the head.
+      const br = 0.85 + Math.random() * 0.55;         // per-drop brightness
+      // Shared wind slant: tail sits up-wind of the head.
       pos[i*6]   = x;               pos[i*6+1] = y;        pos[i*6+2] = z;
-      pos[i*6+3] = x + 0.18 * len;  pos[i*6+4] = y + len;  pos[i*6+5] = z + 0.10 * len;
-      col[i*6]   = 0.62; col[i*6+1] = 0.85; col[i*6+2] = 0.95;   // head
-      col[i*6+3] = 0.06; col[i*6+4] = 0.10; col[i*6+5] = 0.12;   // tail
+      pos[i*6+3] = x + 0.16 * len;  pos[i*6+4] = y + len;  pos[i*6+5] = z + 0.08 * len;
+      col[i*6]   = 0.6 * br; col[i*6+1] = 0.85 * br; col[i*6+2] = 1.0 * br;   // bright cool head
+      col[i*6+3] = 0.0;      col[i*6+4] = 0.04 * br; col[i*6+5] = 0.1 * br;   // fades out
     }
     const geo = new THREE.BufferGeometry();
     this.rainPos = new THREE.Float32BufferAttribute(pos, 3) as THREE.BufferAttribute;
@@ -864,11 +865,11 @@ export class Renderer {
     const adNames = ['\u767D\u77F3\u96FB\u6C17', '\u5929\u5143\u91CD\u5DE5', '\u30B3\u30DF\u30BB\u30F3', '\u9762\u76EE\u30CA\u30CE'];
     const adName = adNames[(Math.random() * adNames.length) | 0];
     const signSpecs: { kind: 'turn' | 'stones' | 'prisoners' | 'id' | 'ad'; shape: 'wide' | 'tall'; rad: number; ang: number; y: number; tilt: number }[] = [
-      { kind: 'turn',      shape: 'wide', rad: size * 6.2, ang: 0.35, y: size * 1.6, tilt: 0    },
-      { kind: 'stones',    shape: 'wide', rad: size * 7.6, ang: 1.85, y: size * 0.4, tilt: 0.12 },
-      { kind: 'prisoners', shape: 'wide', rad: size * 7.0, ang: 3.45, y: size * 2.6, tilt: -0.1 },
-      { kind: 'ad',        shape: 'tall', rad: size * 6.6, ang: 4.65, y: size * 1.8, tilt: 0.06 },
-      { kind: 'id',        shape: 'tall', rad: size * 8.4, ang: 5.75, y: size * 1.0, tilt: 0    },
+      { kind: 'turn',      shape: 'wide', rad: size * 5.0, ang: 0.35, y: size * 1.3, tilt: 0    },
+      { kind: 'stones',    shape: 'wide', rad: size * 5.8, ang: 1.85, y: size * 0.3, tilt: 0.1  },
+      { kind: 'prisoners', shape: 'wide', rad: size * 5.4, ang: 3.45, y: size * 2.0, tilt: -0.1 },
+      { kind: 'ad',        shape: 'tall', rad: size * 5.2, ang: 4.65, y: size * 1.4, tilt: 0.05 },
+      { kind: 'id',        shape: 'tall', rad: size * 6.2, ang: 5.75, y: size * 0.9, tilt: 0    },
     ];
     const postMat = new THREE.MeshBasicMaterial({ color: 0x0a5a6e, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
     this.signPostMat = postMat;
@@ -879,7 +880,7 @@ export class Renderer {
       const ctx = ac.getContext('2d')!;
       const tex = new THREE.CanvasTexture(ac);
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-      const pw = wide ? size * 4.4 : size * 2.2, ph = wide ? size * 2.2 : size * 4.4;
+      const pw = wide ? size * 2.3 : size * 1.4, ph = wide ? size * 1.15 : size * 2.8;
       const board = new THREE.Mesh(new THREE.PlaneGeometry(pw, ph), mat);
       const grp = new THREE.Group();
       grp.position.set(Math.cos(spec.ang) * spec.rad, 0, Math.sin(spec.ang) * spec.rad);
@@ -1411,7 +1412,7 @@ export class Renderer {
     }
     const rev = this.fxReveal;
     if (this.city) this.city.visible = rev > 0.002;
-    if (this.rainMat) this.rainMat.opacity = rev * 0.5;
+    if (this.rainMat) this.rainMat.opacity = rev * 0.85;
 
     // — Data rivers: packets flowing the grid; captures run them red —
     this.riverFlash = Math.max(0, this.riverFlash - 0.03 * f);
