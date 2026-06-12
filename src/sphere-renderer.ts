@@ -92,6 +92,7 @@ export class SphereRenderer {
   private _camDir  = new THREE.Vector3();
   private _fxTmp   = new THREE.Vector3();
   private _fxTmp2  = new THREE.Vector3();
+  private _fxTmp3  = new THREE.Vector3();
   private starShells: { pts: THREE.Points; mat: THREE.PointsMaterial; spin: number; baseOp: number }[] = [];
   private coreHalo:  THREE.Sprite | null = null;
   private coreMat:   THREE.SpriteMaterial | null = null;
@@ -105,7 +106,7 @@ export class SphereRenderer {
   private cometTails: THREE.LineSegments | null = null;
   // Big outer planets (the galaxy's landmarks) + rockets that orbit and dive.
   private planets: { grp: THREE.Group; mat: THREE.MeshBasicMaterial; ring: THREE.Mesh | null; spin: number; u: THREE.Vector3; v: THREE.Vector3; r: number; ang: number; speed: number; flash: number }[] = [];
-  private rockets: { p: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3; a: number; b: number; ang: number; speed: number; mode: 'orbit' | 'dive'; target: number; cooldown: number; hue: [number,number,number] }[] = [];
+  private rockets: { p: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3; a: number; b: number; ang: number; speed: number; mode: 'orbit' | 'dive'; target: number; cooldown: number; hue: [number,number,number]; wob: number }[] = [];
   private rocketGroups: { grp: THREE.Group; eng: THREE.Mesh }[] = [];
   private rocketMats: THREE.Material[] = [];
   private rocketTailPos!: Float32Array;
@@ -672,7 +673,7 @@ export class SphereRenderer {
         this.rocketGroups.push({ grp, eng });
         const u = new THREE.Vector3(), v = new THREE.Vector3();
         this.fxRandomBasis(u, v);
-        this.rockets.push({ p: new THREE.Vector3(), u, v, a: R*(2.6+Math.random()*3), b: R*(4+Math.random()*4), ang: Math.random()*6.28, speed: (0.006+Math.random()*0.008)*(Math.random()<0.5?1:-1), mode: 'orbit', target: -1, cooldown: 200+Math.random()*500, hue: hues[i % hues.length] });
+        this.rockets.push({ p: new THREE.Vector3(), u, v, a: R*(3+Math.random()*4), b: R*(4.5+Math.random()*5), ang: Math.random()*6.28, speed: (0.0028+Math.random()*0.0034)*(Math.random()<0.5?1:-1), mode: 'orbit', target: -1, cooldown: 400+Math.random()*700, hue: hues[i % hues.length], wob: Math.random()*6.28 });
       }
     }
 
@@ -806,7 +807,8 @@ export class SphereRenderer {
       }
     }
 
-    // Rockets: orbit, periodically dive at a planet (flash on arrival), resume.
+    // Rockets: drift on wandering elliptical orbits (slow), occasionally dive
+    // at a planet which flares on arrival; an engine plume pulses behind each.
     if (this.rocketTails && this.rocketGroups.length) {
       for (const mat of this.rocketMats) (mat as THREE.MeshBasicMaterial).opacity = rev;
       (this.rocketMats[0] as THREE.MeshBasicMaterial).opacity = rev * 0.9;
@@ -814,33 +816,48 @@ export class SphereRenderer {
         const rk = this.rockets[i];
         const rg = this.rocketGroups[i];
         rk.cooldown -= f;
+        rk.wob += 0.006 * f;
         const prev = this._fxTmp2.copy(rk.p);
+        let diving = false;
         if (rk.mode === 'orbit') {
           rk.ang += rk.speed * f;
-          const c = Math.cos(rk.ang) * rk.a, sn = Math.sin(rk.ang) * rk.b;
+          // wandering ellipse: the radii breathe slowly so the path isn't a
+          // clean repeating loop.
+          const aa = rk.a * (1 + 0.22 * Math.sin(rk.wob * 1.3));
+          const bb = rk.b * (1 + 0.22 * Math.cos(rk.wob));
+          const c = Math.cos(rk.ang) * aa, sn = Math.sin(rk.ang) * bb;
           rk.p.set(rk.u.x*c + rk.v.x*sn, rk.u.y*c + rk.v.y*sn, rk.u.z*c + rk.v.z*sn);
           if (rk.cooldown <= 0 && this.planets.length) { rk.mode = 'dive'; rk.target = (Math.random()*this.planets.length)|0; }
         } else {
+          diving = true;
           const pl = this.planets[rk.target];
           const to = this._fxTmp.copy(pl.grp.position).sub(rk.p);
           if (to.length() < R * 1.2) {
-            pl.flash = 1;                       // planet surges as the rocket lands
-            rk.mode = 'orbit'; rk.cooldown = 400 + Math.random()*800;
+            pl.flash = 1;                        // planet surges as the rocket lands
+            rk.mode = 'orbit'; rk.cooldown = 500 + Math.random()*900;
             this.fxRandomBasis(rk.u, rk.v); rk.ang = Math.random()*6.28;
           } else {
-            rk.p.addScaledVector(to.normalize(), R * 0.05 * f);
+            rk.p.addScaledVector(to.normalize(), R * 0.03 * f);   // gentler dive
           }
         }
         const fade = this.fxSilhouette(rk.p);
         const hi = rev * fade;
         rg.grp.position.copy(rk.p);
+        // velocity in its own vector (NOT a shared temp — the old alias drew the
+        // trail straight through the globe centre).
         const vel = this._fxTmp.copy(rk.p).sub(prev);
-        if (vel.lengthSq() > 1e-6) rg.grp.lookAt(this._fxTmp2.copy(rk.p).add(vel));
+        const vlen = vel.length();
+        if (vlen > 1e-5) rg.grp.lookAt(this._fxTmp3.copy(rk.p).add(vel));
         rg.grp.visible = rev > 0.002 && fade > 0.3;
+        // Engine plume: a pulsing, dive-stretched glow at the tail.
+        const pulse = 0.8 + 0.5 * Math.abs(Math.sin(this.hoverPhase * 3 + i * 1.7));
+        rg.eng.scale.set(pulse, pulse, (diving ? 2.4 : 1.4) * pulse);
+        // Short engine trail just behind the craft (length tracks speed).
+        const dir = vlen > 1e-5 ? this._fxTmp3.copy(vel).multiplyScalar(1 / vlen) : this._fxTmp3.set(0, 0, 1);
+        const tlen = R * (diving ? 2.2 : 1.3);
         const o = i * 6;
-        const tail = this._fxTmp.copy(rk.p).sub(vel.multiplyScalar(18));
         this.rocketTailPos[o]   = rk.p.x; this.rocketTailPos[o+1] = rk.p.y; this.rocketTailPos[o+2] = rk.p.z;
-        this.rocketTailPos[o+3] = tail.x; this.rocketTailPos[o+4] = tail.y; this.rocketTailPos[o+5] = tail.z;
+        this.rocketTailPos[o+3] = rk.p.x - dir.x*tlen; this.rocketTailPos[o+4] = rk.p.y - dir.y*tlen; this.rocketTailPos[o+5] = rk.p.z - dir.z*tlen;
         this.rocketTailCol[o]   = rk.hue[0]*hi; this.rocketTailCol[o+1] = rk.hue[1]*hi; this.rocketTailCol[o+2] = rk.hue[2]*hi;
         this.rocketTailCol[o+3] = 0; this.rocketTailCol[o+4] = 0; this.rocketTailCol[o+5] = 0;
       }
@@ -848,7 +865,7 @@ export class SphereRenderer {
       (this.rocketTails.geometry.attributes['color'] as THREE.BufferAttribute).needsUpdate = true;
     }
 
-    // Density-wave rings expand and fade.
+    // Density-wave rings expand and fade.    // Density-wave rings expand and fade.
     for (const w of this.waves) {
       if (!w.on) continue;
       w.life += 0.02 * f;

@@ -235,7 +235,9 @@ export class Renderer {
   private signs: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; kind: 'turn' | 'stones' | 'prisoners' | 'id'; flick: number; speed: number }[] = [];
   private capByBlack = 0;
   private capByWhite = 0;
+  private dockFx: { ring: THREE.LineLoop; rMat: THREE.LineBasicMaterial; spr: THREE.Sprite; sMat: THREE.SpriteMaterial; life: number; on: boolean }[] = [];
   private _signDirty = true;
+  private signPostMat: THREE.MeshBasicMaterial | null = null;
   private auroraMat: THREE.MeshBasicMaterial | null = null;
   private auroraTex: THREE.CanvasTexture | null = null;
   private droneAttr: THREE.BufferAttribute | null = null;
@@ -673,6 +675,16 @@ export class Renderer {
     }
   }
 
+  /** Fire the local dock burst (flash + shock ring) at a world point. */
+  private spawnDockFx(p: THREE.Vector3): void {
+    const fx = this.dockFx.find(q => !q.on);
+    if (!fx) return;
+    fx.on = true; fx.life = 0;
+    fx.ring.position.copy(p); fx.spr.position.copy(p);
+    fx.ring.visible = true; fx.spr.visible = true;
+    fx.ring.lookAt(this.camera.position);
+  }
+
   /** THE DATASCAPE — an infinite computational plane the construct hovers
    *  over. Built from what this engine renders beautifully: thousands of small
    *  glowing things. Grid + light carpet (city blocks from altitude) + glow
@@ -816,38 +828,37 @@ export class Renderer {
       this.monoliths.push({ grp, bodyMat, edge, spin: (Math.random() - 0.5) * 0.0012, phase: Math.random() * 6.28, baseY, dockFlash: 0 });
     }
 
-    // — Status boards: a small array of HUD panels reporting the live game —
-    // whose move it is, stones on the board, prisoners taken. Distributed (some
-    // mounted on monoliths, some floating) so the void reads as instrumented,
-    // not one lone billboard. Redrawn from game state on every move.
-    const signSpec: { kind: 'turn' | 'stones' | 'prisoners' | 'id'; mono: number }[] = [
-      { kind: 'turn',      mono: 0  },
-      { kind: 'stones',    mono: 2  },
-      { kind: 'prisoners', mono: -1 },
-      { kind: 'id',        mono: -1 },
-    ];
-    signSpec.forEach((spec, i) => {
+    // — Status boards: free-standing HUD signs reporting the live game, raised
+    // on glowing posts in a ring around the play volume (facing the board), so
+    // they're clearly readable from the zoomed-out framing. Redrawn each move. —
+    const signKinds: ('turn' | 'stones' | 'prisoners' | 'id')[] = ['turn', 'stones', 'prisoners', 'id', 'turn'];
+    const postMat = new THREE.MeshBasicMaterial({ color: 0x0a5a6e, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    this.signPostMat = postMat;
+    signKinds.forEach((kind, i) => {
       const ac = document.createElement('canvas'); ac.width = 256; ac.height = 128;
       const ctx = ac.getContext('2d')!;
       const tex = new THREE.CanvasTexture(ac);
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size * 2.6, size * 1.3), mat);
-      const m = spec.mono >= 0 ? this.monoliths[spec.mono] : null;
-      if (m) {
-        const depth = ((m.grp.children[0] as THREE.Mesh).geometry as THREE.BoxGeometry).parameters.depth;
-        mesh.position.set(0, size * (1.4 - i * 0.6), depth / 2 + 0.3);
-        m.grp.add(mesh);
-      } else {
-        const ang = 1.4 + i * 2.0, rad = size * (7 + (i % 2) * 1.6);
-        mesh.position.set(Math.cos(ang) * rad, size * (0.2 + (i % 2) * 1.4), Math.sin(ang) * rad);
-        mesh.lookAt(0, mesh.position.y, 0);
-        city.add(mesh);
-      }
-      this.signs.push({ mesh, mat, ctx, tex, kind: spec.kind, flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05 });
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(size * 3.4, size * 1.7), mat);
+      const ang = (i / signKinds.length) * Math.PI * 2 + 0.5;
+      const rad = size * 4.6;
+      const y = size * (0.6 + (i % 2) * 1.2);
+      const grp = new THREE.Group();
+      grp.position.set(Math.cos(ang) * rad, 0, Math.sin(ang) * rad);
+      board.position.y = y;
+      grp.add(board);
+      // glowing post from the floor up to the board
+      const postH = y - floorY;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.06, size * 0.06, postH, 6), postMat);
+      post.position.y = floorY + postH / 2;
+      grp.add(post);
+      grp.lookAt(0, y, 0);
+      city.add(grp);
+      this.signs.push({ mesh: board, mat, ctx, tex, kind, flick: Math.random() * 10, speed: 0.04 + Math.random() * 0.05 });
     });
     this.refreshSignage();
 
-    // — Aurora: a slow-scrolling colour band that fills the upper void —    // — Aurora: a slow-scrolling colour band that fills the upper void —
+    // — Aurora: a slow-scrolling colour band that fills the upper void —
     {
       const ac = document.createElement('canvas'); ac.width = 512; ac.height = 128;
       const ag = ac.getContext('2d')!;
@@ -1080,6 +1091,28 @@ export class Renderer {
       this.meteor = new THREE.LineSegments(geo, this.meteorMat);
       this.meteor.frustumCulled = false;
       city.add(this.meteor);
+    }
+
+    // — Dock-burst pool: flash + shock ring at a ship's hull-entry point —
+    {
+      const fc = document.createElement('canvas'); fc.width = 64; fc.height = 64;
+      const fg = fc.getContext('2d')!;
+      const fgrad = fg.createRadialGradient(32, 32, 0, 32, 32, 32);
+      fgrad.addColorStop(0, 'rgba(200,245,255,1)'); fgrad.addColorStop(0.4, 'rgba(120,220,255,0.6)'); fgrad.addColorStop(1, 'rgba(80,180,255,0)');
+      fg.fillStyle = fgrad; fg.fillRect(0, 0, 64, 64);
+      const ftex = new THREE.CanvasTexture(fc);
+      const SEG = 40;
+      const local = new Float32Array(SEG * 3);
+      for (let i = 0; i < SEG; i++) { const a = (i / SEG) * Math.PI * 2; local[i*3] = Math.cos(a); local[i*3+1] = Math.sin(a); local[i*3+2] = 0; }
+      for (let k = 0; k < 4; k++) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(local.slice(), 3));
+        const rMat = new THREE.LineBasicMaterial({ color: 0x9ff4ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+        const ring = new THREE.LineLoop(g, rMat); ring.frustumCulled = false; ring.visible = false; city.add(ring);
+        const sMat = new THREE.SpriteMaterial({ map: ftex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+        const spr = new THREE.Sprite(sMat); spr.visible = false; city.add(spr);
+        this.dockFx.push({ ring, rMat, spr, sMat, life: 0, on: false });
+      }
     }
 
     city.visible = false;
@@ -1392,11 +1425,26 @@ export class Renderer {
       m.bodyMat.opacity = rev * 0.96;
       (m.edge.material as THREE.LineBasicMaterial).opacity = rev;
     }
-    for (const ad of this.adboards) {
-      ad.flick += ad.speed * f;
-      const glitch = Math.random() < 0.012 ? 0.45 : 0;
-      ad.mat.opacity = rev * Math.max(0.12, 0.55 + 0.25 * Math.abs(Math.sin(ad.flick * 1.7)) - glitch);
+
+    // Dock bursts: a bright flash collapses while a shock ring expands at the
+    // point a ship entered the monolith hull.
+    for (const fx of this.dockFx) {
+      if (!fx.on) continue;
+      fx.life += 0.04 * f;
+      const u = fx.life;
+      fx.ring.scale.setScalar(this.game.size * (0.3 + u * 3.5));
+      fx.rMat.opacity = rev * Math.max(0, 1 - u);
+      const sprS = this.game.size * (1.6 * (1 - u) + 0.2);
+      fx.spr.scale.set(sprS, sprS, 1);
+      fx.sMat.opacity = rev * Math.max(0, 1 - u * 1.6);
+      if (u >= 1) { fx.on = false; fx.ring.visible = false; fx.spr.visible = false; }
     }
+    for (const sg of this.signs) {
+      sg.flick += sg.speed * f;
+      const glitch = Math.random() < 0.01 ? 0.4 : 0;
+      sg.mat.opacity = rev * Math.max(0.45, 0.92 - glitch + 0.06 * Math.sin(sg.flick * 1.7));
+    }
+    if (this.signPostMat) this.signPostMat.opacity = rev * 0.5;
 
     // — Rising embers —
     if (this.emberAttr && this.emberMat) {
@@ -1458,6 +1506,7 @@ export class Renderer {
           const to = this._tmpV.copy(sh.dock).sub(sh.p);
           if (to.length() < size * 0.6) {
             this._spawnBurst(sh.p.x, sh.p.y, sh.p.z, 0x66ddff);
+            this.spawnDockFx(sh.dock);            // new local dock burst at the hull
             const m = this.monoliths[(Math.random() * this.monoliths.length) | 0];
             sh.p.copy(m.grp.position);
             sh.p.y += (Math.random() - 0.3) * size * 2;
