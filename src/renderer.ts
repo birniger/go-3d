@@ -931,30 +931,86 @@ export class Renderer {
       this.shipTrails.frustumCulled = false;
       city.add(this.shipTrails);
 
-      const L = size * 0.7;                                   // hull length
-      const hullGeo   = new THREE.BoxGeometry(L * 0.16, L * 0.10, L);
-      const stripGeo  = new THREE.BoxGeometry(L * 0.02, L * 0.03, L * 0.82);
-      const engineGeo = new THREE.BoxGeometry(L * 0.12, L * 0.06, L * 0.05);
-      const navGeo    = new THREE.BoxGeometry(L * 0.045, L * 0.045, L * 0.045);
-      const hullMat   = new THREE.MeshBasicMaterial({ color: 0x141d2c, transparent: true, opacity: 0 });
-      const engCyan   = new THREE.MeshBasicMaterial({ color: 0x9ff4ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-      const engAmber  = new THREE.MeshBasicMaterial({ color: 0xffc266, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-      const navCyanM  = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-      const navPinkM  = new THREE.MeshBasicMaterial({ color: 0xff2d8a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-      this.shipMats = [hullMat, engCyan, engAmber, navCyanM, navPinkM];
+      // Shared materials (opacity driven each frame by reveal). A dark hull
+      // body + a glowing EdgesGeometry trace over it = real 3D craft whose
+      // wireframe reads at any distance. Pooled geometries are reused per type.
+      const L = size * 0.85;
+      const hullMat  = new THREE.MeshBasicMaterial({ color: 0x0a1320, transparent: true, opacity: 0 });
+      const edgeCyan = new THREE.LineBasicMaterial({ color: 0x4fd8ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const edgeAmber= new THREE.LineBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const engCyan  = new THREE.MeshBasicMaterial({ color: 0x9ff4ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const engAmber = new THREE.MeshBasicMaterial({ color: 0xffc266, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const navCyanM = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const navPinkM = new THREE.MeshBasicMaterial({ color: 0xff2d8a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      this.shipMats = [hullMat, edgeCyan, edgeAmber, engCyan, engAmber, navCyanM, navPinkM];
+
+      // A swept wing as a thin extruded prism (genuine 3D volume, not a plane).
+      const wingGeom = (span: number, chord: number, sweep: number): THREE.BufferGeometry => {
+        const t = L * 0.045;
+        const shape = new THREE.Shape();
+        shape.moveTo(0, chord * 0.5);
+        shape.lineTo(span, chord * 0.5 - sweep);
+        shape.lineTo(span, -chord * 0.5 + sweep * 0.55);
+        shape.lineTo(0, -chord * 0.5);
+        shape.closePath();
+        const g = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false });
+        g.translate(0, 0, -t / 2);
+        g.rotateX(Math.PI / 2);              // lie flat in XZ
+        return g;
+      };
+      const addPart = (grp: THREE.Group, geo: THREE.BufferGeometry, edge: THREE.LineBasicMaterial,
+                       x: number, y: number, z: number, ry = 0) => {
+        const mesh = new THREE.Mesh(geo, hullMat);
+        mesh.position.set(x, y, z); mesh.rotation.y = ry; grp.add(mesh);
+        const ln = new THREE.LineSegments(new THREE.EdgesGeometry(geo), edge);
+        ln.position.copy(mesh.position); ln.rotation.copy(mesh.rotation); grp.add(ln);
+      };
+
+      const buildShip = (type: number, cyan: boolean): { grp: THREE.Group; navA: THREE.Mesh; navB: THREE.Mesh } => {
+        const edge = cyan ? edgeCyan : edgeAmber;
+        const eng  = cyan ? engCyan : engAmber;
+        const grp  = new THREE.Group();
+        const fus = new THREE.CylinderGeometry(L * 0.045, L * 0.07, L * 0.7, 6);
+        fus.rotateX(Math.PI / 2);
+        addPart(grp, fus, edge, 0, 0, L * 0.05);
+        const navGeo = new THREE.SphereGeometry(L * 0.035, 6, 6);
+        let wA = L * 0.5, wB = L * 0.5;
+        if (type === 0) {
+          const w = wingGeom(L * 0.55, L * 0.34, L * 0.24);
+          addPart(grp, w, edge,  L * 0.05, 0,  L * 0.06);
+          addPart(grp, w, edge, -L * 0.05, 0,  L * 0.06, Math.PI);
+          const r = wingGeom(L * 0.32, L * 0.2, L * 0.12);
+          addPart(grp, r, edge,  L * 0.05, 0, -L * 0.18);
+          addPart(grp, r, edge, -L * 0.05, 0, -L * 0.18, Math.PI);
+          wA = wB = L * 0.6;
+        } else if (type === 1) {
+          const boom = new THREE.BoxGeometry(L * 0.05, L * 0.05, L * 0.6);
+          addPart(grp, boom, edge,  L * 0.14, 0, 0);
+          addPart(grp, boom, edge, -L * 0.14, 0, 0);
+          const w = wingGeom(L * 0.44, L * 0.3, L * 0.22);
+          addPart(grp, w, edge,  L * 0.16, L * 0.02,  L * 0.02);
+          addPart(grp, w, edge, -L * 0.16, L * 0.02,  L * 0.02, Math.PI);
+          const pod = new THREE.SphereGeometry(L * 0.08, 8, 6); pod.scale(1, 0.8, 1.7);
+          addPart(grp, pod, edge, 0, 0, L * 0.12);
+          wA = wB = L * 0.62;
+        } else {
+          const w = wingGeom(L * 0.6, L * 0.52, L * 0.36);
+          addPart(grp, w, edge, 0, 0, 0);
+          addPart(grp, w, edge, 0, 0, 0, Math.PI);
+          wA = wB = L * 0.6;
+        }
+        const bell = new THREE.Mesh(new THREE.SphereGeometry(L * 0.07, 8, 6), eng);
+        bell.scale.set(1, 1, 0.55); bell.position.set(0, 0, -L * 0.36); grp.add(bell);
+        const navA = new THREE.Mesh(navGeo, navCyanM); navA.position.set(-wA, 0, L * 0.05); grp.add(navA);
+        const navB = new THREE.Mesh(navGeo, navPinkM); navB.position.set( wB, 0, L * 0.05); grp.add(navB);
+        return { grp, navA, navB };
+      };
 
       for (let i = 0; i < N; i++) {
         const cyan = Math.random() < 0.6;
-        const eng = cyan ? engCyan : engAmber;
-        const grp = new THREE.Group();
-        grp.add(new THREE.Mesh(hullGeo, hullMat));
-        const sL = new THREE.Mesh(stripGeo, eng); sL.position.set(-L * 0.09, 0, 0); grp.add(sL);
-        const sR = new THREE.Mesh(stripGeo, eng); sR.position.set( L * 0.09, 0, 0); grp.add(sR);
-        const en = new THREE.Mesh(engineGeo, eng); en.position.set(0, 0, -L * 0.52); grp.add(en);
-        const navA = new THREE.Mesh(navGeo, navCyanM); navA.position.set(-L * 0.10, L * 0.04,  L * 0.46); grp.add(navA);
-        const navB = new THREE.Mesh(navGeo, navPinkM); navB.position.set( L * 0.10, L * 0.04,  L * 0.46); grp.add(navB);
-        city.add(grp);
-        this.shipGroups.push({ grp, navA, navB });
+        const built = buildShip((Math.random() * 3) | 0, cyan);   // random fleet mix
+        city.add(built.grp);
+        this.shipGroups.push(built);
 
         const a = Math.random() * Math.PI * 2;
         this.ships.push({
