@@ -83,23 +83,29 @@ export class SphereRenderer {
     }
   };
 
-  // ── Exterior void FX (orbiting rig outside the globe) ──────────────────────
-  private fxReveal = 0;                 // 0 when the globe fills the view, →1 zoomed out
+  // ── Galaxy void: the globe sits in a star cluster ──────────────────────────
+  // Spherical starfield shells (depth-tested so the opaque globe occludes the
+  // stars behind it — no per-star silhouette maths needed), a warm core-bulge
+  // halo glowing behind the board, drifting nebula clouds, and comets on long
+  // elliptical orbits whose ion tails always point away from the globe.
+  private fxReveal = 0;
   private _camDir  = new THREE.Vector3();
   private _fxTmp   = new THREE.Vector3();
-  private fxRings: {
-    mesh: THREE.LineLoop; local: Float32Array; colorAttr: THREE.BufferAttribute;
-    base: [number, number, number]; spinAxis: THREE.Vector3; spin: number;
-  }[] = [];
-  private fxGlyphTex: THREE.Texture[] = [];
-  private fxGlyphs: {
-    spr: THREE.Sprite; u: THREE.Vector3; v: THREE.Vector3; r: number;
-    ang: number; speed: number; flick: number;
-  }[] = [];
-  private fxSparks: THREE.Points | null = null;
-  private fxSparkColor!: THREE.BufferAttribute;
-  private fxSparkPos!:   THREE.BufferAttribute;
-  private fxSparkData: { u: THREE.Vector3; v: THREE.Vector3; r: number; ang: number; speed: number; base: [number,number,number]; tw: number }[] = [];
+  private _fxTmp2  = new THREE.Vector3();
+  private starShells: { pts: THREE.Points; mat: THREE.PointsMaterial; spin: number; baseOp: number }[] = [];
+  private coreHalo:  THREE.Sprite | null = null;
+  private coreMat:   THREE.SpriteMaterial | null = null;
+  private nebulae:   { spr: THREE.Sprite; mat: THREE.SpriteMaterial; u: THREE.Vector3; v: THREE.Vector3; r: number; ang: number; speed: number; baseOp: number }[] = [];
+  private comets:    { p: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3; a: number; b: number; ang: number; speed: number; hue: [number, number, number] }[] = [];
+  private cometHeadAttr: THREE.BufferAttribute | null = null;
+  private cometHeadCol:  THREE.BufferAttribute | null = null;
+  private cometHeads: THREE.Points | null = null;
+  private cometTailPos!: Float32Array;
+  private cometTailCol!: Float32Array;
+  private cometTails: THREE.LineSegments | null = null;
+  // Reactive: density-wave rings on stone placement + a core flash on capture.
+  private waves: { mesh: THREE.LineLoop; mat: THREE.LineBasicMaterial; life: number; on: boolean }[] = [];
+  private coreFlash = 0;
 
   private onPlace: (node: number) => void;
 
@@ -309,6 +315,7 @@ export class SphereRenderer {
     this.lastMoveMesh.position.copy(p);
     this.lastMoveMesh.lookAt(p.clone().multiplyScalar(2));
     this.lastMoveMesh.visible = true;
+    if (!REDUCED_MOTION) this.spawnWave();   // a density wave ripples out through the cluster
   }
 
   /** Animate captured stones shrinking out. Nodes are already cleared in board. */
@@ -317,6 +324,7 @@ export class SphereRenderer {
     // opacity and is disposed when the animation ends — see animate()). The
     // previous code cloned an extra template material that was never disposed.
     const base = player === 1 ? this.whiteMat : this.blackMat;
+    this.coreFlash = 1;                       // the galactic core flares on a capture
     for (const n of nodes) {
       const mat = base.clone();
       mat.transparent = true;
@@ -445,112 +453,165 @@ export class SphereRenderer {
   private initVoidFX() {
     const R = this.radius;
 
-    // ── Orbit rings ── three tilted neon loops on far shells. Per-vertex colour
-    // lets us fade the arc that sweeps in front of the globe.
-    const SEG = 128;
-    const ringSpec: { rad: number; hue: number; tilt: [number, number, number]; spin: number }[] = [
-      { rad: R * 1.55, hue: 0x00e5ff, tilt: [0.95, 0.2, 0.0],  spin:  0.0016 },
-      { rad: R * 1.95, hue: 0xff0077, tilt: [0.15, 0.6, 0.78], spin: -0.0011 },
-      { rad: R * 2.35, hue: 0x1affa0, tilt: [0.5, -0.4, 0.55], spin:  0.0008 },
+    // Soft round sprite for points (default square GL points look harsh).
+    const dotCv = document.createElement('canvas'); dotCv.width = 64; dotCv.height = 64;
+    const dotG = dotCv.getContext('2d')!;
+    const dotGrad = dotG.createRadialGradient(32, 32, 0, 32, 32, 32);
+    dotGrad.addColorStop(0, 'rgba(255,255,255,1)');
+    dotGrad.addColorStop(0.5, 'rgba(255,255,255,0.6)');
+    dotGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    dotG.fillStyle = dotGrad; dotG.fillRect(0, 0, 64, 64);
+    const dotTex = new THREE.CanvasTexture(dotCv);
+
+    // ── Starfield shells ── thousands of stars on three large spherical shells
+    // around the globe. depthTest:true + the opaque globe writing depth means
+    // stars behind the planet are correctly occluded; the ones around and
+    // beyond read as the cluster the board floats in.
+    const shellSpec = [
+      { n: 1400, r0: R * 6,  r1: R * 9,  size: 0.9, op: 0.9,  spin:  0.00018 },
+      { n: 1100, r0: R * 9,  r1: R * 14, size: 0.7, op: 0.7,  spin: -0.00012 },
+      { n: 700,  r0: R * 14, r1: R * 22, size: 0.55, op: 0.5, spin:  0.00008 },
     ];
-    for (const spec of ringSpec) {
-      const tilt = new THREE.Vector3(...spec.tilt).normalize();
-      // Build an orthonormal basis (u,v) spanning the ring plane (⟂ tilt).
-      const u = new THREE.Vector3();
-      const seed = Math.abs(tilt.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-      u.copy(seed).cross(tilt).normalize();
-      const v = new THREE.Vector3().crossVectors(tilt, u).normalize();
-      const local = new Float32Array(SEG * 3);
-      const colArr = new Float32Array(SEG * 3);
-      for (let i = 0; i < SEG; i++) {
-        const a = (i / SEG) * Math.PI * 2;
-        const x = u.x * Math.cos(a) * spec.rad + v.x * Math.sin(a) * spec.rad;
-        const y = u.y * Math.cos(a) * spec.rad + v.y * Math.sin(a) * spec.rad;
-        const z = u.z * Math.cos(a) * spec.rad + v.z * Math.sin(a) * spec.rad;
-        local[i*3] = x; local[i*3+1] = y; local[i*3+2] = z;
+    for (const sh of shellSpec) {
+      const pos = new Float32Array(sh.n * 3);
+      const col = new Float32Array(sh.n * 3);
+      for (let i = 0; i < sh.n; i++) {
+        // uniform direction on the sphere
+        const z = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2;
+        const rxy = Math.sqrt(1 - z * z);
+        const rad = sh.r0 + Math.random() * (sh.r1 - sh.r0);
+        pos[i*3]   = Math.cos(a) * rxy * rad;
+        pos[i*3+1] = z * rad;
+        pos[i*3+2] = Math.sin(a) * rxy * rad;
+        const roll = Math.random(), b = 0.55 + Math.random() * 0.45;
+        if (roll < 0.6)       { col[i*3] = b; col[i*3+1] = b; col[i*3+2] = b; }            // white
+        else if (roll < 0.85) { col[i*3] = 0.55*b; col[i*3+1] = 0.75*b; col[i*3+2] = b; }  // blue
+        else                  { col[i*3] = b; col[i*3+1] = 0.78*b; col[i*3+2] = 0.5*b; }    // amber
       }
       const g = new THREE.BufferGeometry();
-      const posAttr = new THREE.Float32BufferAttribute(local.slice(), 3);
-      const colorAttr = new THREE.Float32BufferAttribute(colArr, 3);
-      colorAttr.setUsage(THREE.DynamicDrawUsage);
-      g.setAttribute('position', posAttr);
-      g.setAttribute('color', colorAttr);
-      const mesh = new THREE.LineLoop(g, new THREE.LineBasicMaterial({
-        vertexColors: true, transparent: true, opacity: 1,
-        blending: THREE.AdditiveBlending, depthWrite: false,
-      }));
-      mesh.frustumCulled = false;
-      this.scene.add(mesh);
-      this.fxRings.push({
-        mesh, local, colorAttr: colorAttr as THREE.BufferAttribute,
-        base: this.hexRGB(spec.hue),
-        spinAxis: tilt.clone(), spin: spec.spin,
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      const mat = new THREE.PointsMaterial({
+        size: R * sh.size * 0.07, map: dotTex, vertexColors: true, transparent: true, opacity: 0,
+        depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, sizeAttenuation: true,
       });
+      const pts = new THREE.Points(g, mat);
+      pts.frustumCulled = false;
+      this.scene.add(pts);
+      this.starShells.push({ pts, mat, spin: sh.spin, baseOp: sh.op });
     }
 
-    // ── Drifting glyph sprites ── flickering matrix/kanji on circular orbits.
-    const chars = ['ｱ','ﾂ','ﾈ','ﾜ','ﾔ','0','1','7','◇','#','>','零','弐','囲'];
-    for (const ch of chars) {
-      const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
-      const ctx = cv.getContext('2d')!;
-      ctx.clearRect(0, 0, 64, 64);
-      ctx.font = 'bold 44px "Share Tech Mono", monospace';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 8;
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(ch, 32, 34);
-      this.fxGlyphTex.push(new THREE.CanvasTexture(cv));
+    // ── Core bulge ── a big warm radial glow centred on the globe. The opaque
+    // planet occludes its middle (depthTest), leaving a luminous halo around
+    // the board — the galactic core the construct hangs in.
+    {
+      const cc = document.createElement('canvas'); cc.width = 256; cc.height = 256;
+      const cg = cc.getContext('2d')!;
+      const grad = cg.createRadialGradient(128, 128, 8, 128, 128, 128);
+      grad.addColorStop(0,    'rgba(255,244,214,0.95)');
+      grad.addColorStop(0.18, 'rgba(255,210,140,0.7)');
+      grad.addColorStop(0.45, 'rgba(255,150,90,0.32)');
+      grad.addColorStop(1,    'rgba(120,60,160,0)');
+      cg.fillStyle = grad; cg.fillRect(0, 0, 256, 256);
+      this.coreMat = new THREE.SpriteMaterial({
+        map: new THREE.CanvasTexture(cc), transparent: true, opacity: 0,
+        depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
+      });
+      this.coreHalo = new THREE.Sprite(this.coreMat);
+      this.coreHalo.scale.set(R * 7, R * 7, 1);
+      this.scene.add(this.coreHalo);
     }
-    const glyphHues = [0x00e5ff, 0xff0077, 0x1affa0];
-    for (let i = 0; i < 11; i++) {
+
+    // ── Nebula clouds ── a few large soft sprites drifting at mid-far range. —
+    const nebHue = ['rgba(90,120,255,', 'rgba(190,70,220,', 'rgba(60,200,200,'];
+    for (let i = 0; i < 5; i++) {
+      const nc = document.createElement('canvas'); nc.width = 128; nc.height = 128;
+      const ng = nc.getContext('2d')!;
+      const hue = nebHue[i % nebHue.length];
+      for (let b = 0; b < 5; b++) {
+        const gx = 32 + Math.random() * 64, gy = 32 + Math.random() * 64, gr = 24 + Math.random() * 40;
+        const gr2 = ng.createRadialGradient(gx, gy, 2, gx, gy, gr);
+        gr2.addColorStop(0, hue + (0.12 + Math.random() * 0.12) + ')');
+        gr2.addColorStop(1, hue + '0)');
+        ng.fillStyle = gr2; ng.fillRect(0, 0, 128, 128);
+      }
       const mat = new THREE.SpriteMaterial({
-        map: this.fxGlyphTex[(Math.random() * this.fxGlyphTex.length) | 0],
-        color: glyphHues[i % glyphHues.length], transparent: true, opacity: 0,
-        blending: THREE.AdditiveBlending, depthWrite: false,
+        map: new THREE.CanvasTexture(nc), transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
       });
       const spr = new THREE.Sprite(mat);
-      const sc = R * (0.14 + Math.random() * 0.1);
-      spr.scale.set(sc, sc, sc);
-      spr.frustumCulled = false;
+      const sc = R * (3 + Math.random() * 3);
+      spr.scale.set(sc, sc, 1);
       this.scene.add(spr);
       const u = new THREE.Vector3(), v = new THREE.Vector3();
       this.fxRandomBasis(u, v);
-      this.fxGlyphs.push({
-        spr, u, v, r: R * (1.45 + Math.random() * 0.95),
-        ang: Math.random() * Math.PI * 2,
-        speed: (0.003 + Math.random() * 0.006) * (Math.random() < 0.5 ? 1 : -1),
-        flick: Math.random() * Math.PI * 2,
-      });
+      this.nebulae.push({ spr, mat, u, v, r: R * (8 + Math.random() * 7),
+        ang: Math.random() * Math.PI * 2, speed: (0.0006 + Math.random() * 0.001) * (Math.random() < 0.5 ? 1 : -1),
+        baseOp: 0.4 + Math.random() * 0.25 });
     }
 
-    // ── Spark field ── slow neon embers orbiting the globe, per-vertex faded.
-    const N = 90;
-    const pos = new Float32Array(N * 3);
-    const col = new Float32Array(N * 3);
-    const sparkHues = [0x00e5ff, 0xff0077, 0x1affa0, 0x66e0ff];
-    for (let i = 0; i < N; i++) {
-      const u = new THREE.Vector3(), v = new THREE.Vector3();
-      this.fxRandomBasis(u, v);
-      this.fxSparkData.push({
-        u, v, r: R * (1.25 + Math.random() * 1.2),
-        ang: Math.random() * Math.PI * 2,
-        speed: (0.002 + Math.random() * 0.005) * (Math.random() < 0.5 ? 1 : -1),
-        base: this.hexRGB(sparkHues[(Math.random() * sparkHues.length) | 0]),
-        tw: Math.random() * Math.PI * 2,
-      });
+    // ── Comets ── a few on long elliptical orbits; ion tails point away from
+    // the globe (the cluster's gravity well), like comets off a sun. —
+    {
+      const N = 5;
+      this.cometTailPos = new Float32Array(N * 6);
+      this.cometTailCol = new Float32Array(N * 6);
+      const tg = new THREE.BufferGeometry();
+      const tp = new THREE.BufferAttribute(this.cometTailPos, 3); tp.setUsage(THREE.DynamicDrawUsage);
+      const tcl = new THREE.BufferAttribute(this.cometTailCol, 3); tcl.setUsage(THREE.DynamicDrawUsage);
+      tg.setAttribute('position', tp); tg.setAttribute('color', tcl);
+      this.cometTails = new THREE.LineSegments(tg, new THREE.LineBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false }));
+      this.cometTails.frustumCulled = false;
+      this.scene.add(this.cometTails);
+      const hg = new THREE.BufferGeometry();
+      this.cometHeadAttr = new THREE.BufferAttribute(new Float32Array(N * 3), 3); this.cometHeadAttr.setUsage(THREE.DynamicDrawUsage);
+      this.cometHeadCol  = new THREE.BufferAttribute(new Float32Array(N * 3), 3); this.cometHeadCol.setUsage(THREE.DynamicDrawUsage);
+      hg.setAttribute('position', this.cometHeadAttr); hg.setAttribute('color', this.cometHeadCol);
+      this.cometHeads = new THREE.Points(hg, new THREE.PointsMaterial({
+        size: R * 0.2, map: dotTex, vertexColors: true, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true }));
+      this.cometHeads.frustumCulled = false;
+      this.scene.add(this.cometHeads);
+      const hues: [number,number,number][] = [[0.6,0.95,1.0],[1.0,0.7,0.3],[0.7,1.0,0.8]];
+      for (let i = 0; i < N; i++) {
+        const u = new THREE.Vector3(), v = new THREE.Vector3();
+        this.fxRandomBasis(u, v);
+        this.comets.push({
+          p: new THREE.Vector3(), u, v,
+          a: R * (3 + Math.random() * 4), b: R * (5 + Math.random() * 7),
+          ang: Math.random() * Math.PI * 2,
+          speed: (0.004 + Math.random() * 0.006) * (Math.random() < 0.5 ? 1 : -1),
+          hue: hues[i % hues.length],
+        });
+      }
     }
-    const g = new THREE.BufferGeometry();
-    this.fxSparkPos   = new THREE.Float32BufferAttribute(pos, 3); this.fxSparkPos.setUsage(THREE.DynamicDrawUsage);
-    this.fxSparkColor = new THREE.Float32BufferAttribute(col, 3); this.fxSparkColor.setUsage(THREE.DynamicDrawUsage);
-    g.setAttribute('position', this.fxSparkPos);
-    g.setAttribute('color', this.fxSparkColor);
-    this.fxSparks = new THREE.Points(g, new THREE.PointsMaterial({
-      size: R * 0.05, vertexColors: true, transparent: true,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-      sizeAttenuation: true,
-    }));
-    this.fxSparks.frustumCulled = false;
-    this.scene.add(this.fxSparks);
+
+    // ── Density-wave rings ── expanding loops fired on each stone placement. —
+    {
+      const SEG = 64;
+      const local = new Float32Array(SEG * 3);
+      for (let i = 0; i < SEG; i++) { const a = (i / SEG) * Math.PI * 2; local[i*3] = Math.cos(a); local[i*3+1] = 0; local[i*3+2] = Math.sin(a); }
+      for (let k = 0; k < 4; k++) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(local.slice(), 3));
+        const mat = new THREE.LineBasicMaterial({ color: 0x9fdcff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+        const mesh = new THREE.LineLoop(g, mat);
+        mesh.frustumCulled = false; mesh.visible = false;
+        this.scene.add(mesh);
+        this.waves.push({ mesh, mat, life: 0, on: false });
+      }
+    }
+  }
+
+  /** Fire an expanding density wave from the globe — called on stone placement. */
+  private spawnWave(): void {
+    const w = this.waves.find(q => !q.on);
+    if (!w) return;
+    w.on = true; w.life = 0; w.mesh.visible = true;
+    // Random orientation so successive waves don't stack on one plane.
+    w.mesh.quaternion.setFromEuler(new THREE.Euler(Math.random() * 3, Math.random() * 3, 0));
   }
 
   /** Random orthonormal basis (u,v) for a great-circle / orbit plane. */
@@ -586,67 +647,72 @@ export class SphereRenderer {
   private updateVoidFX(f: number) {
     this._camDir.copy(this.camera.position).normalize();
     if (this._camDir.lengthSq() < 1e-4) this._camDir.set(1, 0.6, 1).normalize();
+    const R = this.radius;
 
-    // Zoom gate: hidden at normal framing, fades in only once you dolly out
-    // well past the globe — the rig is an ambient reward for leaning back.
+    // Zoom gate.
     const dist  = this.camera.position.length();
-    const start = this.radius * 4.7, full = this.radius * 6.6;
+    const start = R * 3.8, full = R * 6.0;
     const t = Math.min(1, Math.max(0, (dist - start) / (full - start)));
     this.fxReveal = t * t * (3 - 2 * t);
-    const reveal = this.fxReveal;
+    const rev = this.fxReveal;
 
-    // Rings — spin in place; per-vertex colour faded by silhouette × reveal.
-    for (const ring of this.fxRings) {
-      ring.mesh.rotateOnAxis(ring.spinAxis, ring.spin * f);
-      ring.mesh.updateWorldMatrix(true, false);
-      const mw = ring.mesh.matrixWorld;
-      const col = ring.colorAttr.array as Float32Array;
-      const loc = ring.local;
-      const n = loc.length / 3;
-      const [br, bg, bb] = ring.base;
-      for (let i = 0; i < n; i++) {
-        const o = i * 3;
-        this._fxTmp.set(loc[o], loc[o+1], loc[o+2]).applyMatrix4(mw);
-        const k = reveal * this.fxSilhouette(this._fxTmp);
-        col[o] = br * k; col[o+1] = bg * k; col[o+2] = bb * k;
-      }
-      ring.colorAttr.needsUpdate = true;
+    this.coreFlash = Math.max(0, this.coreFlash - 0.04 * f);
+
+    // Starfield shells: slow rotation + a gentle global twinkle.
+    for (const sh of this.starShells) {
+      sh.pts.rotation.y += sh.spin * f;
+      sh.mat.opacity = rev * sh.baseOp * (0.82 + 0.18 * Math.sin(this.hoverPhase * 0.5 + sh.baseOp * 6));
     }
 
-    // Glyphs — advance along their orbit, flicker, fade.
-    for (const gl of this.fxGlyphs) {
-      gl.ang += gl.speed * f;
-      gl.flick += 0.07 * f;
-      const c = Math.cos(gl.ang) * gl.r, s = Math.sin(gl.ang) * gl.r;
-      gl.spr.position.set(
-        gl.u.x * c + gl.v.x * s,
-        gl.u.y * c + gl.v.y * s,
-        gl.u.z * c + gl.v.z * s,
-      );
-      const flick = 0.55 + 0.45 * Math.sin(gl.flick);
-      (gl.spr.material as THREE.SpriteMaterial).opacity =
-        flick * this.fxSilhouette(gl.spr.position) * reveal;
+    // Core bulge halo: breathes, flares on capture, pulses with the beat glow.
+    if (this.coreMat) {
+      this.coreMat.opacity = rev * (0.45 + 0.08 * Math.sin(this.hoverPhase * 0.3) + 0.5 * this.coreFlash);
+      const sc = R * (7 + this.coreFlash * 1.5);
+      this.coreHalo!.scale.set(sc, sc, 1);
     }
 
-    // Sparks — orbit + twinkle, per-vertex faded.
-    if (this.fxSparks) {
-      const pos = this.fxSparkPos.array as Float32Array;
-      const col = this.fxSparkColor.array as Float32Array;
-      for (let i = 0; i < this.fxSparkData.length; i++) {
-        const sp = this.fxSparkData[i];
-        sp.ang += sp.speed * f; sp.tw += 0.05 * f;
-        const c = Math.cos(sp.ang) * sp.r, s = Math.sin(sp.ang) * sp.r;
-        const x = sp.u.x * c + sp.v.x * s;
-        const y = sp.u.y * c + sp.v.y * s;
-        const z = sp.u.z * c + sp.v.z * s;
-        const o = i * 3;
-        pos[o] = x; pos[o+1] = y; pos[o+2] = z;
-        const tw = 0.4 + 0.6 * Math.abs(Math.sin(sp.tw));
-        const k = reveal * tw * this.fxSilhouette(this._fxTmp.set(x, y, z));
-        col[o] = sp.base[0] * k; col[o+1] = sp.base[1] * k; col[o+2] = sp.base[2] * k;
+    // Nebula clouds drift on slow orbits.
+    for (const nb of this.nebulae) {
+      nb.ang += nb.speed * f;
+      const c = Math.cos(nb.ang) * nb.r, sn = Math.sin(nb.ang) * nb.r;
+      nb.spr.position.set(nb.u.x*c + nb.v.x*sn, nb.u.y*c + nb.v.y*sn, nb.u.z*c + nb.v.z*sn);
+      nb.mat.opacity = rev * nb.baseOp * 0.4;
+    }
+
+    // Comets: elliptical orbit; ion tail points away from the globe.
+    if (this.cometHeads && this.cometTails) {
+      for (let i = 0; i < this.comets.length; i++) {
+        const cm = this.comets[i];
+        cm.ang += cm.speed * f;
+        const c = Math.cos(cm.ang) * cm.a, sn = Math.sin(cm.ang) * cm.b;
+        cm.p.set(cm.u.x*c + cm.v.x*sn, cm.u.y*c + cm.v.y*sn, cm.u.z*c + cm.v.z*sn);
+        const fade = this.fxSilhouette(cm.p);
+        const hi = rev * fade;
+        // tail away from globe centre
+        const dir = this._fxTmp.copy(cm.p).normalize();
+        const tail = this._fxTmp2.copy(cm.p).addScaledVector(dir, R * 2.4);
+        const o = i * 6;
+        this.cometTailPos[o]   = cm.p.x; this.cometTailPos[o+1] = cm.p.y; this.cometTailPos[o+2] = cm.p.z;
+        this.cometTailPos[o+3] = tail.x; this.cometTailPos[o+4] = tail.y; this.cometTailPos[o+5] = tail.z;
+        this.cometTailCol[o]   = cm.hue[0]*hi; this.cometTailCol[o+1] = cm.hue[1]*hi; this.cometTailCol[o+2] = cm.hue[2]*hi;
+        this.cometTailCol[o+3] = 0; this.cometTailCol[o+4] = 0; this.cometTailCol[o+5] = 0;
+        this.cometHeadAttr!.setXYZ(i, cm.p.x, cm.p.y, cm.p.z);
+        this.cometHeadCol!.setXYZ(i, cm.hue[0]*hi, cm.hue[1]*hi, cm.hue[2]*hi);
       }
-      this.fxSparkPos.needsUpdate = true;
-      this.fxSparkColor.needsUpdate = true;
+      (this.cometTails.geometry.attributes['position'] as THREE.BufferAttribute).needsUpdate = true;
+      (this.cometTails.geometry.attributes['color'] as THREE.BufferAttribute).needsUpdate = true;
+      this.cometHeadAttr!.needsUpdate = true;
+      this.cometHeadCol!.needsUpdate = true;
+    }
+
+    // Density-wave rings expand and fade.
+    for (const w of this.waves) {
+      if (!w.on) continue;
+      w.life += 0.02 * f;
+      const u = w.life;
+      w.mesh.scale.setScalar(R * (1.1 + u * 5));
+      w.mat.opacity = rev * Math.max(0, 1 - u) * 0.6;
+      if (u >= 1) { w.on = false; w.mesh.visible = false; }
     }
   }
 
@@ -663,7 +729,7 @@ export class SphereRenderer {
     this._lastT = now;
     this.hoverPhase += 0.05 * f;
     this.controls.update();
-    if (!REDUCED_MOTION && this.camera.position.length() > this.radius * 4.4) this.updateVoidFX(f);
+    if (!REDUCED_MOTION && this.camera.position.length() > this.radius * 3.6) this.updateVoidFX(f);
 
     // Hover ghost
     const node = this.interactive ? this.pickNode() : null;
