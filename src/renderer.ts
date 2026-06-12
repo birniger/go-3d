@@ -2612,13 +2612,20 @@ export class Renderer {
     window.removeEventListener('resize', this._onResize);
     document.removeEventListener('visibilitychange', this._onVisibility);
     this.controls.dispose();
-    // Dispose all Three.js geometries and materials in the scene
+    // Dispose all Three.js geometries and materials in the scene. Material
+    // .dispose() does NOT free the material's textures, so release the void's
+    // CanvasTextures (signs, circuit traces, soft-dot sprite maps) explicitly —
+    // otherwise they leak GPU memory on every game exit/reload/rematch.
+    const disposeMat = (m: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      for (const k of ['map', 'alphaMap', 'emissiveMap', 'bumpMap']) m[k]?.dispose?.();
+      m.dispose();
+    };
     this.scene.traverse((obj) => {
       const o = obj as any; // eslint-disable-line @typescript-eslint/no-explicit-any
       o.geometry?.dispose();
       if (o.material) {
-        if (Array.isArray(o.material)) o.material.forEach((m: any) => m.dispose()); // eslint-disable-line @typescript-eslint/no-explicit-any
-        else o.material.dispose();
+        if (Array.isArray(o.material)) o.material.forEach(disposeMat);
+        else disposeMat(o.material);
       }
     });
     this.composer.dispose();

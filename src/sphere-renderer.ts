@@ -951,12 +951,19 @@ export class SphereRenderer {
     window.removeEventListener('resize', this._onResize);
     document.removeEventListener('visibilitychange', this._onVisibility);
     this.controls.dispose();
+    // Material.dispose() leaves textures alive — free the galaxy's CanvasTextures
+    // (star/dot maps, halo + nebula sprites) so they don't leak on every exit.
+    const disposeMat = (m: THREE.Material) => {
+      const mm = m as unknown as Record<string, { dispose?: () => void } | undefined>;
+      for (const k of ['map', 'alphaMap', 'emissiveMap', 'bumpMap']) mm[k]?.dispose?.();
+      m.dispose();
+    };
     this.scene.traverse((obj) => {
       const o = obj as unknown as { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
       o.geometry?.dispose();
       if (o.material) {
-        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-        else o.material.dispose();
+        if (Array.isArray(o.material)) o.material.forEach(disposeMat);
+        else disposeMat(o.material);
       }
     });
     this.composer.dispose();

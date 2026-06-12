@@ -144,6 +144,7 @@ function resetViewControls(): void {
   setCaptureCounts(0, 0);
   setActiveGlow(1, true);
   setTurnTitle(false);
+  wasMyTurn = false; // fresh game: let the turn-flash fire again on first move
   document.getElementById('go3d-gameover-panel')?.remove();
 }
 
