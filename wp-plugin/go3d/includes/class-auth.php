@@ -221,22 +221,24 @@ class Go3D_Auth {
         self::send_password_reset_email( $user['email'], $user['username'], $token );
     }
 
-    public static function reset_password( string $token, string $new_password ): bool {
+    /** @return string|null the account email on success (so the client can hand
+     *  it to the browser's password manager), or null on invalid/expired token. */
+    public static function reset_password( string $token, string $new_password ): ?string {
         global $wpdb;
         $t    = $wpdb->prefix . 'go3d_users';
         $user = $wpdb->get_row(
-            $wpdb->prepare( "SELECT id FROM $t WHERE reset_token = %s AND reset_expires > %s", hash( 'sha256', $token ), gmdate( 'Y-m-d H:i:s' ) ),
+            $wpdb->prepare( "SELECT id, email FROM $t WHERE reset_token = %s AND reset_expires > %s", hash( 'sha256', $token ), gmdate( 'Y-m-d H:i:s' ) ),
             ARRAY_A
         );
-        if ( ! $user ) return false;
-        if ( strlen( $new_password ) < 8 ) return false;
+        if ( ! $user ) return null;
+        if ( strlen( $new_password ) < 8 ) return null;
 
         $wpdb->update( $t, [
             'password_hash' => password_hash( $new_password, PASSWORD_BCRYPT, [ 'cost' => 12 ] ),
             'reset_token'   => null,
             'reset_expires' => null,
         ], [ 'id' => $user['id'] ] );
-        return true;
+        return $user['email'];
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

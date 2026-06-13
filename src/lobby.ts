@@ -198,26 +198,59 @@ export class Lobby {
   private showResetForm(token: string): void {
     const authEl = document.getElementById('go3d-auth')!;
     authEl.style.display = '';
+    // Hide the auth tabs/panels while resetting so only this form shows.
+    document.querySelector<HTMLElement>('.go3d-auth-tabs')?.style.setProperty('display', 'none');
+    document.querySelectorAll<HTMLElement>('.go3d-tab-panel').forEach(p => p.classList.remove('active'));
 
-    // Build a mini reset form
-    const wrap = document.createElement('div');
-    wrap.className = 'go3d-form';
-    wrap.innerHTML = `
+    // A real <form> (not a bare button): the submit + a username/new-password
+    // field pair is what lets password managers recognise this as a password
+    // change and offer to save it. The username field carries the account email
+    // (filled in once the server returns it) so the manager attaches the new
+    // password to the right login.
+    const form = document.createElement('form');
+    form.className = 'go3d-form';
+    form.id = 'go3d-reset-form';
+    form.setAttribute('novalidate', '');
+    form.innerHTML = `
       <h2>Set new password</h2>
+      <input type="email" name="username" autocomplete="username" hidden>
       <label>New password<input type="password" name="new_password" minlength="8" required autocomplete="new-password"></label>
       <div class="go3d-form-error"></div>
-      <button type="button" class="go3d-btn-primary" id="go3d-do-reset">Set password</button>
+      <button type="submit" class="go3d-btn-primary">Set password</button>
     `;
-    authEl.appendChild(wrap);
+    authEl.appendChild(form);
+    form.querySelector<HTMLInputElement>('[name=new_password]')?.focus();
 
-    wrap.querySelector<HTMLButtonElement>('#go3d-do-reset')!.addEventListener('click', async () => {
-      const pw    = (wrap.querySelector<HTMLInputElement>('[name=new_password]'))!.value;
-      const errEl = wrap.querySelector<HTMLElement>('.go3d-form-error')!;
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const pw    = form.querySelector<HTMLInputElement>('[name=new_password]')!.value;
+      const errEl = form.querySelector<HTMLElement>('.go3d-form-error')!;
+      errEl.style.color = '';
+      errEl.textContent = '';
       try {
-        await AuthState.resetPassword(token, pw);
-        errEl.style.color = '#0f0';
-        errEl.textContent = 'Password changed! You can now log in.';
-        wrap.remove();
+        const email = await AuthState.resetPassword(token, pw);
+
+        // Tell the browser's password manager about the new credential. In
+        // Chromium this shows the native "save password" prompt directly; other
+        // browsers rely on the login-form submit heuristic below.
+        const PC = (window as unknown as { PasswordCredential?: new (d: { id: string; password: string; name?: string }) => Credential }).PasswordCredential;
+        if (email && PC && navigator.credentials?.store) {
+          try { await navigator.credentials.store(new PC({ id: email, password: pw, name: email })); } catch { /* user dismissed / unsupported */ }
+        }
+
+        // Hand off to the login form, pre-filled, so a normal sign-in submits a
+        // real username+password form — the universal save-password trigger.
+        form.remove();
+        document.querySelector<HTMLElement>('.go3d-auth-tabs')?.style.removeProperty('display');
+        document.querySelector<HTMLButtonElement>('[data-tab="login"]')?.click();
+        const login = document.getElementById('go3d-login-form') as HTMLFormElement | null;
+        if (login) {
+          (login.elements.namedItem('email')    as HTMLInputElement).value = email ?? '';
+          (login.elements.namedItem('password') as HTMLInputElement).value = pw;
+          const msg = login.querySelector<HTMLElement>('.go3d-form-error');
+          if (msg) { msg.style.color = '#19f5a0'; msg.textContent = 'Password updated — sign in to finish.'; }
+          (login.elements.namedItem('password') as HTMLInputElement).focus();
+        }
       } catch (err) {
         errEl.textContent = apiErrorMessage(err);
       }

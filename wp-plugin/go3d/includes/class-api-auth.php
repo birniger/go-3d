@@ -130,10 +130,12 @@ class Go3D_API_Auth {
 
         if ( ! $token || ! $password ) return Go3D_API::error( 'Missing token or new_password.', 422 );
 
-        $ok = Go3D_Auth::reset_password( $token, $password );
-        if ( ! $ok ) return Go3D_API::error( 'Invalid or expired reset token, or password too short.', 400 );
+        $email = Go3D_Auth::reset_password( $token, $password );
+        if ( ! $email ) return Go3D_API::error( 'Invalid or expired reset token, or password too short.', 400 );
 
-        return Go3D_API::ok( [ 'message' => 'Password updated. You can now log in.' ] );
+        // Return the email so the client can save the new credential to the
+        // browser's password manager and sign the user straight in.
+        return Go3D_API::ok( [ 'message' => 'Password updated. You can now log in.', 'email' => $email ] );
     }
 
     public static function me( WP_REST_Request $req ): WP_REST_Response {

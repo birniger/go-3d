@@ -90,8 +90,10 @@ export const AuthState = {
     await AuthAPI.requestReset(email);
   },
 
-  async resetPassword(token: string, newPassword: string): Promise<void> {
-    await AuthAPI.resetPassword(token, newPassword);
+  /** @returns the account email, so the caller can save the new credential. */
+  async resetPassword(token: string, newPassword: string): Promise<string> {
+    const r = await AuthAPI.resetPassword(token, newPassword);
+    return r.email;
   },
 
   logout(): void {

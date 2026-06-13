@@ -277,7 +277,7 @@ export const Auth = {
     post<{ message: string }>('/auth/request-reset', { email }),
 
   resetPassword: (token: string, new_password: string) =>
-    post<{ message: string }>('/auth/reset-password', { token, new_password }),
+    post<{ message: string; email: string }>('/auth/reset-password', { token, new_password }),
 
   me: () => get<User>('/auth/me'),
 };
