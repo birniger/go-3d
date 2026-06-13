@@ -90,6 +90,12 @@ export const AuthState = {
     await AuthAPI.requestReset(email);
   },
 
+  /** Look up the account email for a reset token so the reset form can show it
+   *  pre-filled. Returns '' if the token is invalid/expired. */
+  async resetInfo(token: string): Promise<string> {
+    try { return (await AuthAPI.resetInfo(token)).email; } catch { return ''; }
+  },
+
   /** @returns the account email, so the caller can save the new credential. */
   async resetPassword(token: string, newPassword: string): Promise<string> {
     const r = await AuthAPI.resetPassword(token, newPassword);

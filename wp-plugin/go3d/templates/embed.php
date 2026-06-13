@@ -12,7 +12,9 @@
     <!-- Login -->
     <form id="go3d-login-form" class="go3d-form go3d-tab-panel active" data-tab="login" novalidate>
       <h2>Log in</h2>
-      <label>Email<input type="email" name="email" autocomplete="email" required></label>
+      <!-- autocomplete="username" (not "email") so Safari/WebKit treats this as
+           the login identifier and reliably offers to save/autofill the pair. -->
+      <label>Email<input type="email" name="email" autocomplete="username" required></label>
       <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
       <div class="go3d-form-error" aria-live="polite"></div>
       <button type="submit" class="go3d-btn-primary">Log in</button>

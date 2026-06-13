@@ -276,6 +276,9 @@ export const Auth = {
   requestReset: (email: string) =>
     post<{ message: string }>('/auth/request-reset', { email }),
 
+  resetInfo: (token: string) =>
+    post<{ email: string }>('/auth/reset-info', { token }),
+
   resetPassword: (token: string, new_password: string) =>
     post<{ message: string; email: string }>('/auth/reset-password', { token, new_password }),
 

@@ -42,6 +42,12 @@ class Go3D_API_Auth {
             'permission_callback' => '__return_true',
         ] );
 
+        register_rest_route( $ns, '/auth/reset-info', [
+            'methods'             => 'POST',
+            'callback'            => [ __CLASS__, 'reset_info' ],
+            'permission_callback' => '__return_true',
+        ] );
+
         register_rest_route( $ns, '/auth/reset-password', [
             'methods'             => 'POST',
             'callback'            => [ __CLASS__, 'reset_password' ],
@@ -122,6 +128,20 @@ class Go3D_API_Auth {
         $email = sanitize_email( $req->get_param( 'email' ) ?? '' );
         Go3D_Auth::request_reset( $email ); // always silently succeeds
         return Go3D_API::ok( [ 'message' => 'If that email exists, a reset link has been sent.' ] );
+    }
+
+    /** Look up the account email for a (valid, unexpired) reset token so the
+     *  reset form can show it pre-filled — the username the new password is
+     *  saved under. The token is the secret; revealing the email to its holder
+     *  is no more sensitive than the reset itself. */
+    public static function reset_info( WP_REST_Request $req ): WP_REST_Response {
+        $token = sanitize_text_field( $req->get_param( 'token' ) ?? '' );
+        if ( ! $token ) return Go3D_API::error( 'Missing token.', 422 );
+
+        $email = Go3D_Auth::email_for_reset_token( $token );
+        if ( ! $email ) return Go3D_API::error( 'Invalid or expired reset token.', 400 );
+
+        return Go3D_API::ok( [ 'email' => $email ] );
     }
 
     public static function reset_password( WP_REST_Request $req ): WP_REST_Response {
