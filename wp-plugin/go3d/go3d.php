@@ -3,7 +3,7 @@
  * Plugin Name:  3D Go
  * Plugin URI:   https://github.com/birniger/go-3d
  * Description:  Multiplayer 3D Go with user accounts, ELO ratings, and real-time play via Pusher. Includes a local hot-seat mode for two players at one screen.
- * Version:      1.7.7
+ * Version:      1.7.8
  * Author:       birniger
  * License:      MIT
  * Text Domain:  go3d
@@ -11,7 +11,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'GO3D_VERSION',    '1.7.7' );
+define( 'GO3D_VERSION',    '1.7.8' );
 define( 'GO3D_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'GO3D_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -88,22 +88,20 @@ add_action( 'template_redirect', function () {
     if ( isset( $_GET['go3d_verify'] ) ) {
         $token = sanitize_text_field( wp_unslash( $_GET['go3d_verify'] ) );
         $ok    = Go3D_Auth::verify_email( $token );
-        $dest  = home_url( '/' );
-        // Find the page containing the shortcode and redirect there
-        $pages = get_posts( [ 'post_type' => 'page', 's' => '[go3d]', 'numberposts' => 1 ] );
-        if ( $pages ) $dest = get_permalink( $pages[0]->ID );
-        $dest = add_query_arg( 'go3d_verified', $ok ? '1' : '0', $dest );
+        // Land in the app so the lobby actually shows the verified toast and the
+        // user can log straight in — the public shortcode page runs no app JS.
+        $dest = add_query_arg( 'go3d_verified', $ok ? '1' : '0', Go3D_Shortcode::app_url() );
         wp_safe_redirect( $dest );
         exit;
     }
 
     if ( isset( $_GET['go3d_reset'] ) ) {
-        // Just redirect to the shortcode page with the token in a fragment
-        // The JS frontend handles the reset form
+        // Land the user in the actual app (/?go3d_app=1) carrying the token —
+        // the lobby JS reads ?go3d_reset_token= and opens the reset form. The
+        // public shortcode page only renders a launch button (no app JS), so
+        // redirecting there left the token unread and the form never appeared.
         $token = sanitize_text_field( wp_unslash( $_GET['go3d_reset'] ) );
-        $pages = get_posts( [ 'post_type' => 'page', 's' => '[go3d]', 'numberposts' => 1 ] );
-        $dest  = $pages ? get_permalink( $pages[0]->ID ) : home_url( '/' );
-        $dest  = add_query_arg( 'go3d_reset_token', $token, $dest );
+        $dest  = add_query_arg( 'go3d_reset_token', $token, Go3D_Shortcode::app_url() );
         wp_safe_redirect( $dest );
         exit;
     }
